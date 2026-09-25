@@ -153,6 +153,26 @@ sharp-libvips            GLIBC_2.28     koffi / system.node         GLIBC_2.4~2.
 
 ---
 
+## 下载很慢或被中断？
+
+Release 产物约 **194 MB**，托管在 GitHub Releases。从中国大陆访问 GitHub 时可能很慢，
+甚至中途断开（`curl: (56) ... unexpected eof while reading`）。
+
+**下载支持断点续传**，断了就重跑同一条命令，会从断点继续：
+
+```bash
+curl -L -C - --retry 5 -O <Release 里那个文件的链接>
+```
+
+用 AUR 包的用户如果卡在下载阶段，可以先把文件续传下到 makepkg 的 `SRCDIR`，
+再跑 `makepkg -f` —— 它会直接复用已经下好的文件：
+
+```bash
+# 文件名必须和 PKGBUILD 里 source= 的第一段一致
+curl -L -C - --retry 5 -o dsh-desktop-bin-0.9.2.tar.zst \
+  https://github.com/xy-arch-git/dsh-desktop-linux/releases/download/v0.9.2/dsh-desktop-0.9.2-linux-x64.tar.zst
+```
+
 ## 校验
 
 每个 Release 都提供 `.sha256`。下载后：
