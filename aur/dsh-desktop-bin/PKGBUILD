@@ -92,12 +92,12 @@ conflicts=('dsh-desktop')
 options=('!strip' '!debug')
 
 # ↓↓↓ 改成你自己的托管位置（GitHub Releases 最省事）↓↓↓
-_ghrepo='YOURNAME/dsh-desktop-linux'
+_ghrepo='xy-arch-git/dsh-desktop-linux'
 _archive="dsh-desktop-$pkgver-linux-x64.tar.zst"
 
 source=("$pkgname-$pkgver.tar.zst::https://github.com/$_ghrepo/releases/download/v$pkgver/$_archive")
 # 上传后必须更新成实际文件的 sha256（updpkgsums 可自动填）
-sha256sums=('834407df67b585eea21b490f807b72556cc306f8b098ae0d23a72130b46cf4a2')
+sha256sums=('b8198fe08c02e749730b55b3bb0198e14b52661058cc753b0d909b362a48330a')
 
 package() {
   local src="$srcdir/dsh-desktop-$pkgver-linux-x64"
