@@ -1,0 +1,85 @@
+name: Release Linux build
+
+# 推一个 v<版本> 的 tag 就会自动构建并创建 Release。
+# 手动触发（workflow_dispatch）只构建并上传为 workflow artifact，不会创建 Release —— 方便先试跑。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 解析版本号
+        id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            # 手动触发时取 PKGBUILD 里记录的版本
+            echo "version=$(grep -m1 '^pkgver=' aur/dsh-desktop-bin/PKGBUILD | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          fi
+          echo "将构建版本：$(cat "$GITHUB_OUTPUT" | grep version)"
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends imagemagick zstd
+
+      # .build/.cache 里是 npm / @electron/get / electron-builder 三层缓存，
+      # 命中后能把一次构建从 ~10 分钟压到 ~3 分钟。
+      - name: 恢复构建缓存
+        uses: actions/cache@v4
+        with:
+          path: .build/.cache
+          key: dsh-desktop-build-${{ runner.os }}-${{ steps.v.outputs.version }}
+          restore-keys: |
+            dsh-desktop-build-${{ runner.os }}-
+
+      - name: 构建
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          chmod +x build-release.sh
+          ./build-release.sh
+
+      - name: 显示产物
+        run: |
+          ls -lh dist-release/
+          cat dist-release/*.sha256
+
+      # 手动触发：只存成 workflow artifact，不碰 Release
+      - name: 上传为 workflow artifact
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-linux-x64
+          path: dist-release/*
+          retention-days: 7
+
+      # tag 触发：创建 Release 并附上产物与校验和
+      # 用 runner 自带的 gh CLI，不引入第三方 action
+      - name: 创建 Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist-release/*.tar.zst dist-release/*.sha256

@@ -1,0 +1,18 @@
+# 构建工作区与缓存
+.build/
+.buildtest/
+
+# 本地产物（正式产物走 GitHub Releases，不入库）
+dist-release/
+dist-release-test/
+
+# 压缩包与打包产物
+*.tar.zst
+*.tar.gz
+*.pkg.tar.zst
+
+# 编辑器 / 系统
+.DS_Store
+*.swp
+.vscode/
+.idea/
