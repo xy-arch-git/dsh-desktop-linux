@@ -90,7 +90,7 @@ sharp-libvips            GLIBC_2.28     koffi / system.node         GLIBC_2.4~2.
 `node-pty` / `koffi` / `sharp` / `ripgrep` 都是「平台-架构」维度的预编译 N-API 包。
 因此本产物可在任何近年更新过的 x86_64 Linux 上运行。
 
-> ### 关于可复现性（诚实说明）
+> ### 关于可复现性
 >
 > 本产物**不是可复现构建**。实测：同一份源码、同一个 `build-release.sh`，
 > 两次构建出的 `tar.zst` **sha256 不同** —— 因为 tar 会记录文件 mtime。
