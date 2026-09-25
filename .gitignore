@@ -6,7 +6,8 @@
 dist-release/
 dist-release-test/
 
-# 压缩包与打包产物
+# 压缩包、打包产物与中断的下载
+*.part
 *.tar.zst
 *.tar.gz
 *.pkg.tar.zst
