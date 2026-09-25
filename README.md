@@ -1,10 +1,52 @@
 # DSH Desktop for Linux
 
-[DSH Desktop](https://github.com/dataelement/dsh-desktop) 的 **Linux x86_64 预编译发行版**。
+[DSH Desktop](https://github.com/dataelement/dsh-desktop) 的 **Linux x86_64 构建流水线**。
 
-上游只发布 Windows（`.exe`）和 macOS（`.dmg`）安装包，**没有 Linux 二进制**。
-本仓库负责把上游源码编译成 Linux 产物，并以 GitHub Releases 的形式发布，
-供 [AUR](https://aur.archlinux.org/packages/dsh-desktop-bin) 的 `dsh-desktop-bin` 包和其他用户直接使用。
+## 这个仓库是什么
+
+**它不包含 DSH Desktop 的源码，也不存放大体积产物。** 它只做一件事：
+
+> 把上游指定版本的源码编译成 Linux x86_64 产物，发布到本仓库的 **GitHub Releases**。
+
+要下载安装请去 [Releases](../../releases) 或直接用 AUR，
+**不要** clone 本仓库去找安装包 —— 这里只有构建配方。
+
+## 这个仓库为什么存在
+
+上游只发布 Windows（`.exe`）与 macOS（`.dmg`），**没有 Linux 二进制**。
+Linux 用户因此装不上；而 [AUR](https://aur.archlinux.org/packages/dsh-desktop-bin)
+只接受构建配方、不接受二进制，所以二进制必须有地方托管。
+本仓库就是那个托管方的**制造端**：构建过程公开、由 CI 执行、任何人可复现。
+
+```
+上游源码                 本仓库                     GitHub Releases        AUR
+dataelement/             xy-arch-git/               (产物托管)             dsh-desktop-bin
+dsh-desktop              dsh-desktop-linux
+    │                         │                          │                     │
+    │ tag 归档 (25MB)          │ build-release.sh         │                     │
+    └────────────────────────>│ + Actions CI ───────────>│<────────────────────┘
+                              │                          │   PKGBUILD 下载它
+```
+
+## 仓库里每个文件是干什么的
+
+| 文件 | 作用 |
+| --- | --- |
+| `build-release.sh` | **核心**。完整构建流程：取上游源码 → `npm ci` → electron-builder 打包 → 压缩 → 算校验和。本地和 CI 调用的是**同一个脚本** |
+| `.github/workflows/release.yml` | CI 编排：打 `v*` tag 时构建并创建 Release；手动触发只出 artifact |
+| `README.md` | 本文件 |
+| `LICENSE` | 0BSD，授权本仓库的构建脚本（被打包的软件仍是上游的 MIT） |
+| `aur/dsh-desktop-bin/` | AUR 包的开发副本，改完再推给 AUR |
+
+> ### 为什么要有 `build-release.sh`，而不是把命令直接写进 workflow？
+>
+> 因为「构建脚本」和「CI 编排」是两件事：
+>
+> 1. **CI 调用同一个脚本** → 不会出现"本地能过、CI 不能过"这类只有一边才有的问题；
+> 2. **不完全信任本站产物的人**可以 clone 下来跑同一个脚本，得到内容等价的产物
+>    （校验方式见下方「从源码构建」）。
+>
+> 如果把命令内联进 workflow，这两点就都没有了 —— 你只剩一个只能在 GitHub 机器上跑的黑盒。
 
 > **免责声明**：本仓库是独立的社区构建项目，**与上游 dataelement/dsh-desktop 及 DeepSeek 官方无隶属关系**。
 > 软件著作权归上游所有，按 MIT 许可证分发。
@@ -16,23 +58,22 @@
 ### Arch Linux（推荐）
 
 ```bash
-# 从 AUR（会自动下载本仓库的 Release 产物）
 yay -S dsh-desktop-bin
-
-# 或者直接装 Release 里附带的 .pkg.tar.zst
-sudo pacman -U dsh-desktop-bin-<版本>-x86_64.pkg.tar.zst
 ```
 
-### 其他发行版 / 手动安装
+AUR 包会自动下载本仓库 Release 的产物，并在你的机器上打成 pacman 包
+（配方见 [`aur/dsh-desktop-bin/`](aur/dsh-desktop-bin/)）。
 
-下载 `dsh-desktop-<版本>-linux-x64.tar.zst`，解包后把 `app/` 放到任意目录，直接运行其中的 `dsh-desktop`：
+### 手动安装（任意 Linux 发行版）
+
+**Release 里提供的是普通压缩包，不是 pacman 包。** 解包后即可运行：
 
 ```bash
 tar --zstd -xf dsh-desktop-<版本>-linux-x64.tar.zst
 ./dsh-desktop-<版本>-linux-x64/app/dsh-desktop
 ```
 
-安装 `.desktop` 与图标（可选）：
+想装进系统目录（可选，把 `<版本>` 换成实际版本号）：
 
 ```bash
 D=dsh-desktop-<版本>-linux-x64
@@ -45,6 +86,13 @@ for p in "$D"/icons/*.png; do
   sudo install -Dm644 "$p" "/usr/share/icons/hicolor/$s/apps/dsh-desktop.png"
 done
 ```
+
+> Arch 用户如果不想用 AUR，也可以直接用本仓库的 PKGBUILD 自己打包：
+>
+> ```bash
+> git clone https://github.com/xy-arch-git/dsh-desktop-linux.git
+> cd dsh-desktop-linux/aur/dsh-desktop-bin && makepkg -si
+> ```
 
 ---
 
