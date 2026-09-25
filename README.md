@@ -34,43 +34,10 @@ dsh-desktop              dsh-desktop-linux
 | --- | --- |
 | `build-release.sh` | **核心**。完整构建流程：取上游源码 → `npm ci` → electron-builder 打包 → 压缩 → 算校验和。本地和 CI 调用的是**同一个脚本** |
 | `.github/workflows/release.yml` | CI 编排：打 `v*` tag 时构建并创建 Release；手动触发只出 artifact |
-| `README.md` | 本文件 |
 | `LICENSE` | 0BSD，授权本仓库的构建脚本（被打包的软件仍是上游的 MIT） |
 | `aur/dsh-desktop-bin/` | AUR **预编译版**配方（已发布），改完再推给 AUR |
 | `aur/dsh-desktop/` | AUR **源码版**配方：使用者在本地从上游源码构建，**未发布**，作为另一条分发路径备用 |
 | `upstream-fix/` | 给现有 AUR 包 `dsh-desktop-git` 的 npm 12 修复补丁，可直接贴到它的评论区 |
-
-### 为什么仓库里没有源码
-
-构建时从上游的**官方 tag 归档**下载源码，而不是把源码放进本仓库或某个 fork。
-
-原因：这是整条链上**唯一可公开验证的环节**。
-
-```
-build-release.sh 下载上游 v0.9.2 的 tag 归档
-        ↓
-打印 sha256 = 8421af5fe341f70f86c0d2bfde3bbd5edfc70fb1fff0250ce566b47391cdef3b
-        ↓
-任何人都能从上游仓库下同一个归档，比对是不是同一个文件
-```
-
-如果把源码 vendor 进本仓库（或改成从 fork 构建），这条链就断了 ——
-从此变成"从某个副本构建"，外人无法再核对这份源码是否等于上游那一份。
-
-同理，**上游删库不影响已经发布的版本**：AUR 包下载的是 Release 产物，不碰上游。
-只有发布**新版本**时才需要上游还在。
-
-> 如果将来需要带 Linux 专属补丁，正确做法是加 `patches/` 目录并在构建脚本里显式应用，
-> 而不是把整棵源码树搬进来 —— 补丁是可审计的，一棵树不是。
-
-### 两个 AUR 配方有什么区别
-
-| | `aur/dsh-desktop-bin/`（已发布） | `aur/dsh-desktop/`（备用） |
-| --- | --- | --- |
-| 使用者做什么 | 下载本站 Release 的 194MB 产物 | 自己下载 25MB 源码并编译 |
-| 耗时 | 约 1 分钟 | 约 10 分钟（下载约 1GB 依赖） |
-| 依赖本站 | 是 | **否** —— 只依赖上游源码 |
-| 适用 | 大多数用户 | 不想信任本站二进制的人 |
 
 
 > ### 为什么要有 `build-release.sh`，而不是把命令直接写进 workflow？
