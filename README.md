@@ -37,7 +37,7 @@ dsh-desktop              dsh-desktop-linux
 | `LICENSE` | 0BSD，授权本仓库的构建脚本（被打包的软件仍是上游的 MIT） |
 | `aur/dsh-desktop-bin/` | AUR **预编译版**配方（已发布），改完再推给 AUR |
 | `aur/dsh-desktop/` | AUR **源码版**配方：使用者在本地从上游源码构建，**未发布**，作为另一条分发路径备用 |
-| `upstream-fix/` | 给现有 AUR 包 `dsh-desktop-git` 的 npm 12 修复补丁 |
+| `upstream-fix/` |  npm 12 修复补丁 |
 
 
 > ### 为什么要有 `build-release.sh`，而不是把命令直接写进 workflow？
