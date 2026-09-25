@@ -36,7 +36,19 @@ dsh-desktop              dsh-desktop-linux
 | `.github/workflows/release.yml` | CI 编排：打 `v*` tag 时构建并创建 Release；手动触发只出 artifact |
 | `README.md` | 本文件 |
 | `LICENSE` | 0BSD，授权本仓库的构建脚本（被打包的软件仍是上游的 MIT） |
-| `aur/dsh-desktop-bin/` | AUR 包的开发副本，改完再推给 AUR |
+| `aur/dsh-desktop-bin/` | AUR **预编译版**配方（已发布），改完再推给 AUR |
+| `aur/dsh-desktop/` | AUR **源码版**配方：使用者在本地从上游源码构建，**未发布**，作为另一条分发路径备用 |
+| `upstream-fix/` | 给现有 AUR 包 `dsh-desktop-git` 的 npm 12 修复补丁，可直接贴到它的评论区 |
+
+### 两个 AUR 配方有什么区别
+
+| | `aur/dsh-desktop-bin/`（已发布） | `aur/dsh-desktop/`（备用） |
+| --- | --- | --- |
+| 使用者做什么 | 下载本站 Release 的 194MB 产物 | 自己下载 25MB 源码并编译 |
+| 耗时 | 约 1 分钟 | 约 10 分钟（下载约 1GB 依赖） |
+| 依赖本站 | 是 | **否** —— 只依赖上游源码 |
+| 适用 | 大多数用户 | 不想信任本站二进制的人 |
+
 
 > ### 为什么要有 `build-release.sh`，而不是把命令直接写进 workflow？
 >

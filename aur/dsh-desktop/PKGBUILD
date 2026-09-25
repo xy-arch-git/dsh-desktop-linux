@@ -1,0 +1,109 @@
+# Maintainer: xy-arch-git <333688328+xy-arch-git at users dot noreply dot github dot com>
+#
+# Built from the upstream v$pkgver tag archive. Not affiliated with upstream.
+
+pkgname=dsh-desktop
+pkgver=0.9.2
+pkgrel=1
+pkgdesc='Cross-platform desktop shell for DeepSeek Harness: local Agent runtime, model providers, mobile phone pairing, editable PPTX generation'
+arch=('x86_64')
+url='https://github.com/dataelement/dsh-desktop'
+license=('MIT')
+depends=('alsa-lib'
+         'at-spi2-core'
+         'brotli'
+         'c-ares'
+         'flac'
+         'fontconfig'
+         'freetype2'
+         'gcc-libs'
+         'glibc'
+         'gtk3'
+         'harfbuzz'
+         'libdrm'
+         'libevent'
+         'libffi'
+         'libjpeg-turbo'
+         'libnotify'
+         'libpulse'
+         'libsecret'
+         'libxcomposite'
+         'libxdamage'
+         'libxkbcommon'
+         'libxrandr'
+         'libxss'
+         'libxtst'
+         'libxml2'
+         'libxslt'
+         'minizip'
+         'nss'
+         'opus'
+         'util-linux'
+         'xdg-utils'
+         'zlib')
+makedepends=('git' 'imagemagick' 'nodejs>=22' 'npm')
+optdepends=('libappindicator-gtk3: system tray icon support'
+            'pipewire: WebRTC desktop sharing under Wayland')
+# Bundled Electron must not be stripped; no debug package is needed either.
+options=('!strip' '!debug')
+
+source=("$pkgname-$pkgver.tar.gz::https://github.com/dataelement/dsh-desktop/archive/refs/tags/v$pkgver.tar.gz"
+        'dsh-desktop.desktop')
+sha256sums=('8421af5fe341f70f86c0d2bfde3bbd5edfc70fb1fff0250ce566b47391cdef3b'
+            'e9804d3a4dc48403c0de04bea5c92dc1fde59c442ca07e43d0dad3a00d7d81d2')
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+
+  export npm_config_audit=false
+  export npm_config_fund=false
+
+  # Each of the four layers reads a different cache variable.
+  export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+  export npm_config_cache="${npm_config_cache:-$HOME/.npm}"
+  export electron_config_cache="${electron_config_cache:-$XDG_CACHE_HOME/electron}"
+  export ELECTRON_BUILDER_CACHE="${ELECTRON_BUILDER_CACHE:-$XDG_CACHE_HOME/electron-builder}"
+
+  # npm 12 refuses lockfile tarballs whose host differs from the configured registry,
+  # and skips dependency install scripts -- but those scripts are what fetch Electron
+  # and the bundled Node runtime. Both flags are inert on npm 10 and 11.
+  npm ci --allow-remote=all --dangerously-allow-all-scripts
+
+  npm run package:dir
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+
+  local appdir="$pkgdir/opt/dsh-desktop"
+  [[ -d dist/linux-unpacked ]] || { echo "error: dist/linux-unpacked not found" >&2; exit 1; }
+
+  install -d "$appdir"
+  cp -r dist/linux-unpacked/. "$appdir/"
+
+  # electron-builder names the main executable after package.json's "name".
+  local exe="$appdir/dsh-desktop"
+  if [[ ! -f "$exe" ]]; then
+    exe=$(find "$appdir" -maxdepth 1 -type f -executable \
+            ! -name 'chrome-sandbox' ! -name 'chrome_crashpad_handler' -print -quit)
+  fi
+  [[ -n "$exe" && -f "$exe" ]] || { echo "error: main executable not found in $appdir" >&2; exit 1; }
+  chmod 755 "$exe"
+
+  install -d "$pkgdir/usr/bin"
+  ln -s "/opt/dsh-desktop/$(basename "$exe")" "$pkgdir/usr/bin/dsh-desktop"
+
+  install -Dm644 "$srcdir/dsh-desktop.desktop" \
+    "$pkgdir/usr/share/applications/dsh-desktop.desktop"
+
+  # Upstream ships no Linux icon set, so render one from the source PNG.
+  local magick size icon
+  magick=$(command -v magick || command -v convert)
+  for size in 16 32 48 64 128 256 512; do
+    icon="$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/dsh-desktop.png"
+    install -d "$(dirname "$icon")"
+    "$magick" build/app-icon.png -resize "${size}x${size}" "$icon"
+  done
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,32 @@
+--- original.PKGBUILD	2026-09-25 12:18:47.343099339 +0800
++++ fixed.PKGBUILD	2026-09-25 12:18:47.361775552 +0800
+@@ -73,6 +73,8 @@
+             'pipewire: WebRTC desktop sharing under Wayland')
+ provides=('dsh-desktop')
+ conflicts=('dsh-desktop')
++# Electron 自带二进制不可 strip；也不需要为它生成 debug 包
++options=('!strip' '!debug')
+ source=("$pkgname::git+https://github.com/dataelement/dsh-desktop.git"
+         'dsh-desktop.desktop')
+ sha256sums=('SKIP'
+@@ -108,9 +110,19 @@
+   export npm_config_audit=false
+   export npm_config_fund=false
+ 
++  # npm / @electron/get / electron-builder 各读各的缓存变量，四个都要给，
++  # 否则在受限 HOME（CI、容器、只读家目录）下会 ENOENT/EROFS 失败。
++  export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
++  export npm_config_cache="${npm_config_cache:-$HOME/.npm}"
++  export electron_config_cache="${electron_config_cache:-$XDG_CACHE_HOME/electron}"
++  export ELECTRON_BUILDER_CACHE="${ELECTRON_BUILDER_CACHE:-$XDG_CACHE_HOME/electron-builder}"
++
+   # Electron 二进制按官方默认源下载（GitHub）
+ 
+-  npm ci
++  # npm 12 起：allow-remote 默认 none，会拒绝 lockfile 里 npmmirror 的 tarball；
++  # 依赖的 install 脚本默认不执行，Electron / 捆绑 Node 运行时就下载不到。
++  # 这两个开关在 npm 10/11 上只是未使用的配置项，不会报错。
++  npm ci --allow-remote=all --dangerously-allow-all-scripts
+   npm run package:dir
+ }
+ 
