@@ -23,7 +23,7 @@ Linux 用户因此装不上；而 [AUR](https://aur.archlinux.org/packages/dsh-d
 dataelement/             xy-arch-git/               (产物托管)             dsh-desktop-bin
 dsh-desktop              dsh-desktop-linux
     │                         │                          │                     │
-    │ tag 归档 (25MB)          │ build-release.sh         │                     │
+    │ tag 归档 (25MB)         │ build-release.sh         │                     │
     └────────────────────────>│ + Actions CI ───────────>│<────────────────────┘
                               │                          │   PKGBUILD 下载它
 ```
