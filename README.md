@@ -2,16 +2,16 @@
 
 [DSH Desktop](https://github.com/dataelement/dsh-desktop) 的 **Linux x86_64 构建流水线**。
 
-## 这个仓库是什么
+## 仓库定义
 
-**它不包含 DSH Desktop 的源码，也不存放大体积产物。** 它负责完成一项工作：
+**不包含 DSH Desktop 的源码，只负责编译打包。** 即：
 
 > 把上游指定版本的源码编译成 Linux x86_64 产物，发布到本仓库的 **GitHub Releases**。
 
 要下载安装请去 [Releases](../../releases) 或直接用 AUR，
 **不要** clone 本仓库去找安装包 —— 这里只有构建配方。
 
-## 这个仓库为什么存在
+## 仓库意义
 
 上游只发布 Windows（`.exe`）与 macOS（`.dmg`），**没有 Linux 二进制**。
 Linux 用户因此装不上；而 [AUR](https://aur.archlinux.org/packages/dsh-desktop-bin)
@@ -28,7 +28,7 @@ dsh-desktop              dsh-desktop-linux
                               │                          │   PKGBUILD 下载它
 ```
 
-## 仓库里每个文件是干什么的
+## 仓库内容
 
 | 文件 | 作用 |
 | --- | --- |
@@ -42,7 +42,7 @@ dsh-desktop              dsh-desktop-linux
 | `upstream-fix/` |  npm 12 修复补丁 |
 
 
-> ### 为什么要有 `build-release.sh`，而不是把命令直接写进 workflow？
+> ### 提供 `build-release.sh`，而非把命令直接写进 workflow的原因：
 >
 > 因为「构建脚本」和「CI 编排」是两件事：
 >
@@ -101,7 +101,7 @@ makepkg -si
 
 ---
 
-## 下载内容是什么
+## Release内容
 
 每个 Release 附带的 `dsh-desktop-<版本>-linux-x64.tar.zst` 解包后结构固定：
 
@@ -162,7 +162,7 @@ sharp-libvips            GLIBC_2.28     koffi / system.node         GLIBC_2.4~2.
 
 `.github/workflows/auto-release.yml` 每天检查上游有没有新版本，有就自动构建并发布。
 
-**但它会在发布前做一件事**：比对新构建捆绑的 DSH 会话格式版本与 `session-format.txt` 里的基线。
+**发布前事宜**：比对新构建捆绑的 DSH 会话格式版本与 `session-format.txt` 里的基线。
 
 为什么？DSH 的会话格式是**硬闸门**——每个构建只读自己那一个版本（见
 `dsh-session-persistence` 的 `sessionFormatVersionRefusal`）。格式一变，
