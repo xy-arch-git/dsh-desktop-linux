@@ -91,12 +91,13 @@ for p in "$D"/icons/*.png; do
 done
 ```
 
-> Arch 用户如果不想用 AUR，也可以直接用本仓库的 PKGBUILD 自己打包：
->
-> ```bash
-> git clone https://github.com/xy-arch-git/dsh-desktop-linux.git
-> cd dsh-desktop-linux/aur/dsh-desktop-bin && makepkg -si
-> ```
+**Arch 用户如果不想用 AUR**，也可以直接用本仓库的 PKGBUILD 自己打包：
+
+```bash
+git clone https://github.com/xy-arch-git/dsh-desktop-linux.git
+cd dsh-desktop-linux/aur/dsh-desktop-bin
+makepkg -si
+```
 
 ---
 
@@ -186,7 +187,9 @@ Release 产物约 **194 MB**，托管在 GitHub Releases。从中国大陆访问
 **下载支持断点续传**，断了就重跑同一条命令，会从断点继续：
 
 ```bash
-curl -L -C - --retry 5 -O <Release 里那个文件的链接>
+V=0.9.2          # ← 改成实际版本号；文件名要和 Release 上的资产名一致
+curl -L -C - --retry 5 -O \
+  "https://github.com/xy-arch-git/dsh-desktop-linux/releases/download/v$V/dsh-desktop-$V-linux-x64.tar.zst"
 ```
 
 用 AUR 包的用户如果卡在下载阶段，可以先把文件续传下到 makepkg 的 `SRCDIR`，
