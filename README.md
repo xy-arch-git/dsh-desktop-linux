@@ -164,13 +164,13 @@ sharp-libvips            GLIBC_2.28     koffi / system.node         GLIBC_2.4~2.
 
 **发布前事宜**：比对新构建捆绑的 DSH 会话格式版本与 `session-format.txt` 里的基线。
 
-为什么？DSH 的会话格式是**硬闸门**——每个构建只读自己那一个版本（见
+DSH 的会话格式是**硬闸门**——每个构建只读自己那一个版本（见
 `dsh-session-persistence` 的 `sessionFormatVersionRefusal`）。格式一变，
 用户升级后历史会话就全部打不开，报：
 
 > the log was written by a newer harness — upgrade the harness to open it
 
-而升级软件包**不会**动用户数据目录，所以这个错会直接砸到用户脸上。
+而升级软件包**不会**动用户数据目录，所以这个错会输出给用户。
 
 **格式没变** → 自动发布。
 **格式变了** → 拒绝发布 + 开一个 issue 告诉你；你确认要接受时，把
