@@ -34,6 +34,8 @@ dsh-desktop              dsh-desktop-linux
 | --- | --- |
 | `build-release.sh` | **核心**。完整构建流程：取上游源码 → `npm ci` → electron-builder 打包 → 压缩 → 算校验和。本地和 CI 调用的是**同一个脚本** |
 | `.github/workflows/release.yml` | CI 编排：打 `v*` tag 时构建并创建 Release；手动触发只出 artifact |
+| `.github/workflows/auto-release.yml` | **自动发布**：每天检查上游新版本，构建并发布；**会话格式变了会拒绝发布并开 issue** |
+| `session-format.txt` | 会话格式基线。自动发布拿它和新构建比对，变了就停下来等人确认 |
 | `LICENSE` | 0BSD，授权本仓库的构建脚本（被打包的软件仍是上游的 MIT） |
 | `aur/dsh-desktop-bin/` | AUR **预编译版**配方（已发布），改完再推给 AUR |
 | `aur/dsh-desktop/` | AUR **源码版**配方：使用者在本地从上游源码构建，**未发布**，作为另一条分发路径备用 |
@@ -154,6 +156,27 @@ sharp-libvips            GLIBC_2.28     koffi / system.node         GLIBC_2.4~2.
 > 或使用 AUR 的源码包 `dsh-desktop`。
 
 ---
+
+## 自动发布与「会话格式闸门」
+
+`.github/workflows/auto-release.yml` 每天检查上游有没有新版本，有就自动构建并发布。
+
+**但它会在发布前做一件事**：比对新构建捆绑的 DSH 会话格式版本与 `session-format.txt` 里的基线。
+
+为什么？DSH 的会话格式是**硬闸门**——每个构建只读自己那一个版本（见
+`dsh-session-persistence` 的 `sessionFormatVersionRefusal`）。格式一变，
+用户升级后历史会话就全部打不开，报：
+
+> the log was written by a newer harness — upgrade the harness to open it
+
+而升级软件包**不会**动用户数据目录，所以这个错会直接砸到用户脸上。
+
+**格式没变** → 自动发布。
+**格式变了** → 拒绝发布 + 开一个 issue 告诉你；你确认要接受时，把
+`session-format.txt` 改成新值再跑一次即可。
+
+格式版本是从产物里 `@deepseek-ai/dsh-session/lib/index.js` 的
+`SESSION_FORMAT_VERSION = N` 直接读出来的（不执行代码）。
 
 ## 下载很慢或被中断？
 

@@ -1,0 +1,243 @@
+name: Auto release (upstream watch)
+
+# 定时检查上游 dsh-desktop 有没有新版本，有就构建并发布。
+#
+# 关键安全设计：发布前比对「新构建捆绑的 DSH 会话格式版本」与仓库里的基线
+# （session-format.txt）。DSH 的会话格式是硬闸门——每个构建只读自己那一个版本——
+# 所以格式一变，用户升级后历史会话就全部打不开。格式变了本 workflow 会拒绝发布
+# 并开一个 issue 通知你，由你决定是否接受。
+#
+# 与 release.yml 的关系：本 workflow 用 GITHUB_TOKEN 推 tag，而 GitHub 规定
+# 「GITHUB_TOKEN 触发的事件不会再产生新的 workflow run」，
+# 所以不会重复触发 release.yml 的 tag 构建。
+#
+# 注意：GitHub 会在仓库连续 60 天无活动后停用定时 workflow，届时需手动重新启用。
+
+on:
+  schedule:
+    # 每天 03:17 UTC（避开整点，减少排队）
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '指定上游版本（不含 v 前缀）；留空则自动探测上游最新 tag'
+        required: false
+        type: string
+      dry_run:
+        description: '只构建并校验，不创建 Release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends imagemagick zstd
+
+      - name: 解析目标版本
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          upstream=$(git ls-remote --tags https://github.com/dataelement/dsh-desktop.git 2>/dev/null \
+            | grep -oP 'refs/tags/v\K[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+
+          ours=$(gh release list --limit 100 --json tagName --jq '.[].tagName' 2>/dev/null \
+            | grep -oP '^v\K[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+
+          target="${INPUT_VERSION:-$upstream}"
+          if [ -z "$target" ]; then
+            echo "::error::无法确定上游版本（网络问题，或上游没有 v 前缀 tag）"
+            exit 1
+          fi
+
+          echo "上游最新 : ${upstream:-未知}"
+          echo "已发布   : ${ours:-无}"
+          echo "本次目标 : $target"
+
+          if [ -n "$ours" ] && [ "$(printf '%s\n%s\n' "$ours" "$target" | sort -V | tail -1)" = "$ours" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$target" >> "$GITHUB_OUTPUT"
+
+      - name: 没有新版本
+        if: steps.v.outputs.skip == 'true'
+        run: echo "✅ 上游没有新版本（已发布 ${{ steps.v.outputs.version }} 或更新），结束"
+
+      - name: Release 已存在则跳过
+        id: exists
+        if: steps.v.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
+            echo "Release v${{ steps.v.outputs.version }} 已存在，跳过"
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "yes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 恢复构建缓存
+        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true'
+        uses: actions/cache@v4
+        with:
+          path: .build/.cache
+          key: dsh-desktop-build-${{ runner.os }}-${{ steps.v.outputs.version }}
+          restore-keys: |
+            dsh-desktop-build-${{ runner.os }}-
+
+      - name: 构建
+        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          chmod +x build-release.sh
+          ./build-release.sh
+
+      # 从刚构建出来的产物里读出它捆绑的 DSH 会话格式版本。
+      #
+      # 做法：直接 grep 常量定义，而不是 require 那个包。原因——实测发现
+      # dsh-session-persistence 会 import @deepseek-ai/cordis，把单个文件抽到临时
+      # 目录后模块解析会失败。而 @deepseek-ai/dsh-session/lib/index.js 里
+      # "SESSION_FORMAT_VERSION = N" 是字面量且全文件只出现一次，
+      # 所以 tar 流式解出来 grep 即可：不执行代码、不需要 node、只解 74KB。
+      - name: 探测新构建的会话格式版本
+        id: fmt
+        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          tar="dist-release/dsh-desktop-${VERSION}-linux-x64.tar.zst"
+          member="dsh-desktop-${VERSION}-linux-x64/app/resources/app/node_modules/@deepseek-ai/dsh-session/lib/index.js"
+
+          new_fmt=$(tar --zstd -xOf "$tar" "$member" \
+            | grep -oP 'SESSION_FORMAT_VERSION\s*=\s*\K[0-9]+' | head -1 || true)
+          if [ -z "$new_fmt" ]; then
+            echo "::error::无法从产物里解析会话格式版本（$member）"
+            exit 1
+          fi
+
+          base_fmt=$(tr -d '[:space:]' < session-format.txt)
+          if [ -z "$base_fmt" ]; then
+            echo "::error::session-format.txt 是空的，无法比对"
+            exit 1
+          fi
+
+          echo "基线格式 : v$base_fmt"
+          echo "新构建   : v$new_fmt"
+          echo "new=$new_fmt" >> "$GITHUB_OUTPUT"
+          echo "base=$base_fmt" >> "$GITHUB_OUTPUT"
+
+      # 格式变了：拒绝发布 + 开 issue。这是本 workflow 存在的核心理由。
+      - name: 会话格式变更 → 拒绝发布
+        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true' && steps.fmt.outputs.new != steps.fmt.outputs.base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW: ${{ steps.fmt.outputs.new }}
+          BASE: ${{ steps.fmt.outputs.base }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          title="会话格式变更：v${BASE} → v${NEW}（上游 ${VERSION}，需人工确认）"
+
+          cat > /tmp/issue-body.md <<EOF
+          **自动发布已中止。**
+
+          上游 \`${VERSION}\` 构建出的产物捆绑了会话格式 **v${NEW}**，
+          而当前已发布版本的格式是 **v${BASE}**。
+
+          DSH 的会话格式是硬闸门 —— 每个构建只读自己那一个版本。用户升级后会看到：
+
+          > the log was written by a newer harness — upgrade the harness to open it
+
+          也就是说**他们的历史会话会全部打不开**。
+
+          ## 确认要发布的话
+
+          1. 在 README 的「已知事项」里写明这次升级会让历史会话不可读
+          2. 把 \`session-format.txt\` 的内容改成 \`${NEW}\` 并提交到 main
+          3. 重新运行本 workflow（Actions → Auto release → Run workflow）
+
+          ## 不打算接受的话
+
+          什么都不用做。继续用 v${BASE} 格式的现有版本，上游更新会被跳过。
+
+          ---
+
+          技术细节：格式版本由产物内 \`dsh-session-persistence\` 的
+          \`sessionFormatVersionRefusal('probe', 999)\` 探测得出。
+          EOF
+
+          existing=$(gh issue list --state open --search "in:title 会话格式变更 v${BASE}" --json number --jq 'length')
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "$title" --body-file /tmp/issue-body.md
+            echo "已创建 issue"
+          else
+            echo "已有同类未关闭 issue，跳过创建"
+          fi
+
+          echo "::error::会话格式从 v${BASE} 变为 v${NEW}，已拒绝发布。详见该 issue。"
+          exit 1
+
+      - name: 打 tag 并创建 Release
+        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+          NEWFMT: ${{ steps.fmt.outputs.new }}
+        run: |
+          set -euo pipefail
+
+          # 把本次的会话格式随 Release 一起发布，便于日后追溯
+          echo "$NEWFMT" > dist-release/session-format.txt
+
+          # 用 GITHUB_TOKEN 推 tag —— 按 GitHub 规则不会触发 release.yml 的 tag 构建
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
+
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            dist-release/*.tar.zst \
+            dist-release/*.sha256 \
+            dist-release/session-format.txt
+
+          echo "✅ 已发布 v${VERSION}（会话格式 v${NEWFMT}）"
+
+      - name: 干跑完成
+        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true' && inputs.dry_run == true
+        run: |
+          echo "🧪 干跑模式：构建与格式校验均已完成，未创建 Release。"
+          echo "   目标版本 : ${{ steps.v.outputs.version }}"
+          echo "   会话格式 : v${{ steps.fmt.outputs.new }}（基线 v${{ steps.fmt.outputs.base }}）"
