@@ -206,7 +206,8 @@ curl -L -C - --retry 5 -o dsh-desktop-bin-0.9.2.tar.zst \
 每个 Release 都提供 `.sha256`。下载后：
 
 ```bash
-sha256sum -c dsh-desktop-<版本>-linux-x64.tar.zst.sha256
+V=0.9.2          # ← 改成实际版本号
+sha256sum -c "dsh-desktop-$V-linux-x64.tar.zst.sha256"
 ```
 
 ---
@@ -217,7 +218,7 @@ sha256sum -c dsh-desktop-<版本>-linux-x64.tar.zst.sha256
 [`.github/workflows/release.yml`](.github/workflows/release.yml) 确认 CI 做了什么。
 
 ```bash
-git clone https://github.com/<你的用户名>/dsh-desktop-linux.git
+git clone https://github.com/xy-arch-git/dsh-desktop-linux.git
 cd dsh-desktop-linux
 ./build-release.sh
 ```
@@ -236,37 +237,8 @@ cd dsh-desktop-linux
 VERSION=0.9.3 ./build-release.sh
 ```
 
-### 关于那两个 npm 开关
-
-`npm ci` 需要两个显式开关，否则在 npm 12 上**必然失败**。这不是本仓库的怪癖，
-而是上游 `package-lock.json` 与 npm 12 新默认值的冲突：
-
-| 开关 | 为什么需要 |
-| --- | --- |
-| `--allow-remote=all` | npm 12 起 `allow-remote` 默认为 `none`。lockfile 里 1113 个包的 `resolved` 指向 `registry.npmmirror.com`，与默认 registry 主机名不同 → 被判为 remote 型依赖而拒绝（`EALLOWREMOTE`） |
-| `--dangerously-allow-all-scripts` | npm 12 起默认不执行依赖的 install 脚本（[RFC npm/rfcs#868](https://github.com/npm/rfcs/pull/868)），而 Electron 二进制与随包 Node 运行时正是靠 install 脚本下载的 |
-
-这两个开关在 npm 10 / 11 上只是未被使用的配置项，不会报错（已实测 npm 10.9.9 / 11.20.0 / 12.0.2）。
-
----
-
-## 发布流程（维护者）
-
-```bash
-# 1. 构建
-VERSION=0.9.3 ./build-release.sh
-
-# 2. 打 tag 并推送（CI 会自动构建并创建 Release，见 workflow）
-git tag v0.9.3 && git push origin v0.9.3
-
-# 3. 更新 AUR 包
-cd aur/dsh-desktop-bin
-sed -i 's/^pkgver=.*/pkgver=0.9.3/' PKGBUILD
-updpkgsums                       # 重算 sha256
-makepkg --printsrcinfo > .SRCINFO
-makepkg -f                       # 本地验证
-# 然后 push 到 ssh://aur@aur.archlinux.org/dsh-desktop-bin.git
-```
+那两个 npm 开关为什么需要、受限环境还要补哪些缓存变量，
+见 [`upstream-fix/`](upstream-fix/)。
 
 ---
 
