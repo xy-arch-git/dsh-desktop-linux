@@ -158,35 +158,15 @@ sharp-libvips            GLIBC_2.28     koffi / system.node         GLIBC_2.4~2.
 
 ---
 
-## 自动发布与「会话格式闸门」
+## 自动更新
 
-`.github/workflows/auto-release.yml` 每天检查上游有没有新版本，有就自动构建并发布。
+本仓库用 `.github/workflows/auto-release.yml` **每天自动检查上游**有没有新版本，
+有就自动构建并发布到 Releases。
 
-**发布前事宜**：判断新构建的会话格式，与用户手上的数据能不能对上。
+**用户不需要做任何事** —— 按上面的方式安装，拿到的一直是最新版本。
 
-DSH 的会话日志带格式版本号，而每个构建**只读它自己那一个版本**
-（见 `dsh-session-persistence` 的 `sessionFormatVersionRefusal`）。
-升级软件包**不会**动用户数据目录，所以格式对不上时，用户的历史会话会打不开。
-
-**此外，「格式号变了」并不等同于「会话打不开」** ： DSH 自带迁移链
-（`dsh-session-format-catalog` 里的 `sessionFormatVxToVy` 边），能把旧格式自动升上来。
-所以判定标准是**能否迁移过去**，而非版本号是否相等：
-
-| 情况 | 处理 |
-| --- | --- |
-| 格式没变 | 自动发布 |
-| 格式变了，**但迁移链走得通**（例：v3 → v4） | **自动发布** —— 用户会话会被自动迁移 |
-| 格式变了，**迁移链走不通** | 拒绝发布 + 开一个 issue 告诉你 |
-
-只有第三种才会真的让用户丢会话。确实要发布时，把 `session-format.txt` 改成新值再跑一次。
-
-两个值都是从产物里**直接读出来**的，不执行产物代码：
-
-- 格式版本 —— `@deepseek-ai/dsh-session/lib/index.js` 里的 `SESSION_FORMAT_VERSION = N`
-- 迁移链 —— `dsh-session-format-catalog/lib/index.js` 里的 `sessionFormatVxToVy`
-
-**基线会自动前进**：每次发布都附带一份 `session-format.txt` 资产，下次发布直接读它，
-不需要手动维护。仓库根目录那份只是首次发布的引导值。
+这个流程还会自动挡掉一类有问题的版本：某些上游升级会让桌面端读不了已有的会话记录。
+遇到这种版本，它会**拒绝发布**并通知维护者，不会直接推给用户。
 
 ## 下载很慢或被中断？
 
