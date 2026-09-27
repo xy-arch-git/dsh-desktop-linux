@@ -123,44 +123,102 @@ jobs:
           chmod +x build-release.sh
           ./build-release.sh
 
-      # 从刚构建出来的产物里读出它捆绑的 DSH 会话格式版本。
+      # 从产物里读出两件事：
+      #   1) 本构建支持的会话格式版本（SESSION_FORMAT_VERSION 字面量）
+      #   2) 它能做的历史格式迁移（sessionFormatVxToVy 迁移边）
       #
-      # 做法：直接 grep 常量定义，而不是 require 那个包。原因——实测发现
-      # dsh-session-persistence 会 import @deepseek-ai/cordis，把单个文件抽到临时
-      # 目录后模块解析会失败。而 @deepseek-ai/dsh-session/lib/index.js 里
-      # "SESSION_FORMAT_VERSION = N" 是字面量且全文件只出现一次，
-      # 所以 tar 流式解出来 grep 即可：不执行代码、不需要 node、只解 74KB。
-      - name: 探测新构建的会话格式版本
+      # 只比较格式号是不够的 —— DSH 自带迁移链，v3 的日志在 v4 构建上是能自动迁移的。
+      # 判定标准是「基线能否沿迁移链走到新版本」，而不是「版本号是否相等」。
+      - name: 探测会话格式与迁移能力
         id: fmt
         if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -euo pipefail
           tar="dist-release/dsh-desktop-${VERSION}-linux-x64.tar.zst"
-          member="dsh-desktop-${VERSION}-linux-x64/app/resources/app/node_modules/@deepseek-ai/dsh-session/lib/index.js"
 
-          new_fmt=$(tar --zstd -xOf "$tar" "$member" \
-            | grep -oP 'SESSION_FORMAT_VERSION\s*=\s*\K[0-9]+' | head -1 || true)
+          # 先把清单落到文件再 grep。直接 tar -tf | grep -m1 会因为 grep 提前退出
+          # 触发 SIGPIPE，在 set -o pipefail 下会把整个步骤判失败。
+          listing=$(mktemp)
+          tar --zstd -tf "$tar" > "$listing"
+          session_member=$(grep -m1 '/@deepseek-ai/dsh-session/lib/index.js$' "$listing" || true)
+          catalog_member=$(grep -m1 '/dsh-session-format-catalog/lib/index.js$' "$listing" || true)
+          rm -f "$listing"
+
+          if [ -z "$session_member" ]; then
+            echo "::error::产物里找不到 @deepseek-ai/dsh-session"
+            exit 1
+          fi
+          if [ -z "$catalog_member" ]; then
+            echo "::error::产物里找不到 dsh-session-format-catalog"
+            exit 1
+          fi
+
+          new_fmt=$(tar --zstd -xOf "$tar" "$session_member" \
+            | grep -oP 'SESSION_FORMAT_VERSION\s*=\s*\K[0-9]+' || true)
           if [ -z "$new_fmt" ]; then
-            echo "::error::无法从产物里解析会话格式版本（$member）"
+            echo "::error::无法从产物里解析会话格式版本（$session_member）"
             exit 1
           fi
 
-          base_fmt=$(tr -d '[:space:]' < session-format.txt)
+          edges=$(tar --zstd -xOf "$tar" "$catalog_member" \
+            | grep -oP 'sessionFormatV\K[0-9]+ToV[0-9]+' | sort -u | tr '\n' ' ' || true)
+          echo "迁移链: ${edges:-（无）}"
+
+          # 基线优先取上一个 Release 附带的 session-format.txt（随发布自动前进），
+          # 取不到才退回仓库里的引导值。
+          base_fmt=""
+          prev_tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)
+          if [ -n "$prev_tag" ]; then
+            tmp=$(mktemp -d)
+            if gh release download "$prev_tag" --pattern 'session-format.txt' --dir "$tmp" 2>/dev/null; then
+              base_fmt=$(tr -d '[:space:]' < "$tmp/session-format.txt")
+            fi
+            rm -rf "$tmp"
+          fi
           if [ -z "$base_fmt" ]; then
-            echo "::error::session-format.txt 是空的，无法比对"
+            base_fmt=$(tr -d '[:space:]' < session-format.txt || true)
+            echo "上一版 ${prev_tag:-（无）} 未附带 session-format.txt，退回仓库基线 v${base_fmt:-?}"
+          fi
+          if [ -z "$base_fmt" ]; then
+            echo "::error::拿不到基线版本，无法判定"
             exit 1
           fi
+
+          migratable=$(python3 -c "
+          import sys
+          from collections import defaultdict
+          edges = [e for e in '$edges'.split() if e]
+          graph = defaultdict(list)
+          for e in edges:
+              a, b = e.split('ToV')
+              graph[int(a)].append(int(b))
+          src, dst = $base_fmt, $new_fmt
+          if src == dst:
+              print('yes'); sys.exit()
+          seen, stack = {src}, [src]
+          while stack:
+              v = stack.pop()
+              for w in graph.get(v, []):
+                  if w == dst:
+                      print('yes'); sys.exit()
+                  if w not in seen:
+                      seen.add(w); stack.append(w)
+          print('no')
+          ")
 
           echo "基线格式 : v$base_fmt"
           echo "新构建   : v$new_fmt"
-          echo "new=$new_fmt" >> "$GITHUB_OUTPUT"
-          echo "base=$base_fmt" >> "$GITHUB_OUTPUT"
+          echo "可迁移   : $migratable"
+          echo "new=$new_fmt"            >> "$GITHUB_OUTPUT"
+          echo "base=$base_fmt"          >> "$GITHUB_OUTPUT"
+          echo "migratable=$migratable"  >> "$GITHUB_OUTPUT"
 
-      # 格式变了：拒绝发布 + 开 issue。这是本 workflow 存在的核心理由。
-      - name: 会话格式变更 → 拒绝发布
-        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true' && steps.fmt.outputs.new != steps.fmt.outputs.base
+      # 只有「基线沿迁移链走不到新版本」时才拒绝 —— 那才是真会让用户会话打不开的情况。
+      - name: 会话格式无法迁移 → 拒绝发布
+        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true' && steps.fmt.outputs.migratable != 'yes'
         env:
           GH_TOKEN: ${{ github.token }}
           NEW: ${{ steps.fmt.outputs.new }}
@@ -169,15 +227,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          title="会话格式变更：v${BASE} → v${NEW}（上游 ${VERSION}，需人工确认）"
+          title="会话格式无法迁移：v${BASE} → v${NEW}（上游 ${VERSION}，需人工确认）"
 
           cat > /tmp/issue-body.md <<EOF
           **自动发布已中止。**
 
-          上游 \`${VERSION}\` 构建出的产物捆绑了会话格式 **v${NEW}**，
-          而当前已发布版本的格式是 **v${BASE}**。
+          上游 \`${VERSION}\` 构建出的产物使用会话格式 **v${NEW}**，
+          而用户当前的数据是 **v${BASE}**，并且这个构建**没有**从 v${BASE} 到 v${NEW} 的迁移路径。
 
-          DSH 的会话格式是硬闸门 —— 每个构建只读自己那一个版本。用户升级后会看到：
+          DSH 每个构建只读它自己那一个格式版本，没有迁移路径时会直接拒绝，用户会看到：
 
           > the log was written by a newer harness — upgrade the harness to open it
 
@@ -185,21 +243,21 @@ jobs:
 
           ## 确认要发布的话
 
-          1. 在 README 的「已知事项」里写明这次升级会让历史会话不可读
+          1. 在 README 里写明这次升级会让历史会话不可读
           2. 把 \`session-format.txt\` 的内容改成 \`${NEW}\` 并提交到 main
           3. 重新运行本 workflow（Actions → Auto release → Run workflow）
 
           ## 不打算接受的话
 
-          什么都不用做。继续用 v${BASE} 格式的现有版本，上游更新会被跳过。
+          什么都不用做。继续用 v${BASE} 的现有版本，上游更新会被跳过。
 
           ---
 
-          技术细节：格式版本由产物内 \`dsh-session-persistence\` 的
-          \`sessionFormatVersionRefusal('probe', 999)\` 探测得出。
+          技术细节：判定依据是产物内 \`dsh-session-format-catalog\` 的迁移边
+          （\`sessionFormatVxToVy\`）。本构建的迁移链里没有通向 v${NEW} 的路径。
           EOF
 
-          existing=$(gh issue list --state open --search "in:title 会话格式变更 v${BASE}" --json number --jq 'length')
+          existing=$(gh issue list --state open --search "in:title 会话格式无法迁移 v${BASE}" --json number --jq 'length')
           if [ "$existing" = "0" ]; then
             gh issue create --title "$title" --body-file /tmp/issue-body.md
             echo "已创建 issue"
@@ -207,7 +265,7 @@ jobs:
             echo "已有同类未关闭 issue，跳过创建"
           fi
 
-          echo "::error::会话格式从 v${BASE} 变为 v${NEW}，已拒绝发布。详见该 issue。"
+          echo "::error::会话格式 v${BASE} → v${NEW} 且无迁移路径，已拒绝发布。详见该 issue。"
           exit 1
 
       - name: 打 tag 并创建 Release
