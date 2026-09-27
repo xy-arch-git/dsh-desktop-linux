@@ -28,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      accept_format_change:
+        description: '⚠️ 即使会话格式无法迁移也强行发布（会让用户的历史会话不可读）'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -218,7 +223,7 @@ jobs:
 
       # 只有「基线沿迁移链走不到新版本」时才拒绝 —— 那才是真会让用户会话打不开的情况。
       - name: 会话格式无法迁移 → 拒绝发布
-        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true' && steps.fmt.outputs.migratable != 'yes'
+        if: steps.v.outputs.skip != 'true' && steps.exists.outputs.yes != 'true' && steps.fmt.outputs.migratable != 'yes' && inputs.accept_format_change != true
         env:
           GH_TOKEN: ${{ github.token }}
           NEW: ${{ steps.fmt.outputs.new }}
@@ -244,8 +249,11 @@ jobs:
           ## 确认要发布的话
 
           1. 在 README 里写明这次升级会让历史会话不可读
-          2. 把 \`session-format.txt\` 的内容改成 \`${NEW}\` 并提交到 main
-          3. 重新运行本 workflow（Actions → Auto release → Run workflow）
+          2. 重新运行本 workflow（Actions → Auto release → Run workflow），
+             并把 **accept_format_change** 勾上
+
+          > 仓库里的 \`session-format.txt\` 只是首次发布的引导值。
+          > 每次发布都会把当时的格式随 Release 一起发出去，之后基线就以它为准确认要
 
           ## 不打算接受的话
 
