@@ -123,8 +123,13 @@ EOF
 
 # 自检：结构与体积
 [[ -x "$STAGE/app/dsh-desktop" ]] || die "app/dsh-desktop 不可执行"
-[[ -f "$STAGE/app/resources/app/node_modules/node/bin/node" ]] \
-  || die "缺少随包 Node 运行时"
+  # 随包 Node 运行时。它的位置随上游 electron-builder 配置变化，所以不写死路径：
+  #   v0.9.2  → app/resources/app/node_modules/node/bin/node
+  #   v0.10.0 → app/resources/app.asar.unpacked/node_modules/node/bin/node
+  NODE_RT="$(find "$STAGE/app/resources" -path '*/node_modules/node/bin/node' -type f -print -quit 2>/dev/null || true)"
+  [[ -n "$NODE_RT" ]] \
+    || die "缺少随包 Node 运行时（app/resources 下找不到 node_modules/node/bin/node）"
+  log "随包 Node: ${NODE_RT#"$STAGE/app/"} ($(du -h "$NODE_RT" | cut -f1))"
 log "发布树大小: $(du -sh "$STAGE" | cut -f1)"
 
 # --- 5. 压缩 + 校验和 ------------------------------------------------------
