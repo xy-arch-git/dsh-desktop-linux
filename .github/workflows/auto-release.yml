@@ -87,12 +87,102 @@ jobs:
           echo "已发布   : ${ours:-无}"
           echo "本次目标 : $target"
 
+          # 版本上限：超出 upstream-ceiling.txt 的上游发布一律跳过。
+          # 理由见该文件（v0.11.0 改用 Electron-as-Node，Linux 上 sharp 段错误）。
+          # 这里直接置 skip=true，下游所有步骤（构建、格式探测、发布）的现有
+          # if 条件就天然跟着跳过，不必逐条修改。
+          ceiling=$(grep -vE '^[[:space:]]*(#|$)' upstream-ceiling.txt | head -1 | tr -d '[:space:]')
+          echo "支持上限 : ${ceiling:-未设置}"
+          echo "ceiling=$ceiling" >> "$GITHUB_OUTPUT"
+          if [ -n "$ceiling" ] \
+            && [ "$(printf '%s\n%s\n' "$ceiling" "$target" | sort -V | tail -1)" != "$ceiling" ]; then
+            echo "ceiling_blocked=true" >> "$GITHUB_OUTPUT"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "version=$target" >> "$GITHUB_OUTPUT"
+            echo "::notice::上游 $target 超出支持上限 $ceiling，已跳过构建与发布（原因见 issue）"
+            exit 0
+          fi
+          echo "ceiling_blocked=false" >> "$GITHUB_OUTPUT"
+
           if [ -n "$ours" ] && [ "$(printf '%s\n%s\n' "$ours" "$target" | sort -V | tail -1)" = "$ours" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$target" >> "$GITHUB_OUTPUT"
+
+      - name: 上游版本超出支持上限 → 开 issue
+        if: steps.v.outputs.ceiling_blocked == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+          CEILING: ${{ steps.v.outputs.ceiling }}
+        run: |
+          set -euo pipefail
+
+          title="上游 ${VERSION} 超出支持上限 ${CEILING}，已跳过自动发布"
+
+          cat > /tmp/ceiling-body.md <<EOF
+          **自动发布已跳过 —— 没有构建，也没有发布。这不是故障，是刻意的保护。**
+
+          上游 \`${VERSION}\` 超过了本仓库声明的支持上限 \`${CEILING}\`
+          （见 [\`upstream-ceiling.txt\`](../blob/main/upstream-ceiling.txt)）。
+
+          ## 为什么设了这个上限
+
+          从 **v0.11.0** 起，上游把宿主运行环境从**随包独立 Node** 换成了
+          **Electron-as-Node**。其源码注释写得很明确：
+
+          > The Desktop no longer ships a standalone Node.
+          > The Electron binary that runs Node work … always with \`ELECTRON_RUN_AS_NODE=1\`.
+
+          而 Electron 在 Linux 上的二进制会**动态链接全局 glib 并把符号泄漏进进程空间**，
+          与 sharp 自带的 libvips 冲突，导致 **sharp 段错误**
+          （上游 bug：[electron/electron#46323](https://github.com/electron/electron/issues/46323)，至今未修）。
+
+          实测（同一个 sharp 0.35.x，同一段 1×1 像素 PNG 编解码）：
+
+          | 运行环境 | 结果 |
+          |---|---|
+          | 独立 Node 26 | ✅ 正常 |
+          | Electron 43（v0.11.0 用的就是它） | 💥 SIGSEGV |
+          | Electron 44 | 💥 SIGSEGV |
+
+          v0.10.0 用的是随包独立 Node，所以 sharp 正常。
+
+          **结论：v0.11.0 对 Linux 用户是净退化** —— 新增的 Office 文档转换没有
+          Linux 版 LibreOfficeKit（官方从未发布 \`@deepseek-ai/libreoffice-kit-linux-*\`）
+          用不了，而原本正常的图片功能反而会崩。
+
+          ## 怎么处理
+
+          **什么都不用做**：继续用 v${CEILING}，更高的上游版本会被持续跳过。
+
+          想接受新版的话，先确认上游已经解决上述问题，然后把
+          \`upstream-ceiling.txt\` 里的版本号改成新的可用版本，
+          并同步更新 README 的兼容性说明。
+
+          ---
+
+          复现命令（Linux，需先备好 Electron 与 sharp）：
+
+          \`\`\`sh
+          ELECTRON_RUN_AS_NODE=1 ./electron -e "
+            const sharp=require('sharp');
+            sharp(Buffer.from([17,103,231]),{raw:{width:1,height:1,channels:3}})
+              .png().toBuffer().then(b=>console.log('ok',b.length));
+          "
+          # → 核心转储（SIGSEGV）
+          \`\`\`
+          EOF
+
+          existing=$(gh issue list --state open --search "in:title 超出支持上限 ${CEILING}" --json number --jq 'length')
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "$title" --body-file /tmp/ceiling-body.md
+            echo "已创建 issue"
+          else
+            echo "已有同类未关闭 issue，跳过创建"
+          fi
 
       - name: 没有新版本
         if: steps.v.outputs.skip == 'true'

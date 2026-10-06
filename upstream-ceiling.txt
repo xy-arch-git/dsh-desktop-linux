@@ -1,0 +1,31 @@
+# 支持的上游版本上限
+#
+# auto-release.yml 只会构建「不超过这个版本」的上游发布；
+# 更高的上游版本会被跳过并开一个 issue（不会失败，也不会发布）。
+#
+# 为什么是 0.10.0：
+#
+#   上游 v0.11.0 把宿主运行环境从「随包独立 Node」改成了
+#   Electron-as-Node（见其 src/main/runtime/electron-node-executable.ts
+#   的注释：The Desktop no longer ships a standalone Node），
+#   而 Electron 在 Linux 上的二进制会动态链接全局 glib 并泄漏符号，
+#   与 sharp 自带的 libvips 冲突，导致 sharp 段错误
+#   （上游 bug：electron/electron#46323，至今未修）。
+#
+#   实测（同一个 sharp 0.35.x，同一段 1x1 像素的 PNG 编解码）：
+#     独立 Node 26   → 正常
+#     Electron 43    → SIGSEGV（核心转储）
+#     Electron 44    → SIGSEGV（核心转储）
+#
+#   v0.10.0 用的是随包独立 Node，所以 sharp 正常。
+#   也就是说 v0.11.0 对 Linux 用户是净退化：新增的 Office 转换没有
+#   Linux 版 LibreOfficeKit 用不了，而原本正常的图片功能反而会崩。
+#
+# 什么时候可以上调这个上限：
+#
+#   1. 上游恢复独立 Node（或为 Linux 提供 sharp 的可用方案），或
+#   2. electron#46323 被修复且上游跟进 Electron 版本。
+#
+#   确认后把下面的版本号改成新的可用版本，并同步更新 README 的兼容性说明。
+
+0.10.0

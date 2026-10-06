@@ -128,7 +128,37 @@ minizip nss opus util-linux xdg-utils zlib
 
 ## 兼容性
 
-**glibc 要求：≥ 2.28（2018 年发布）**，已实测确认。
+### ⚠️ 版本上限：只支持到上游 0.10.0
+
+本仓库**不会**构建比 [`upstream-ceiling.txt`](upstream-ceiling.txt) 里声明的版本更新的上游发布；
+更高的版本会被每日检查跳过并开一个 issue（不构建、不发布）。
+
+原因是上游 **v0.11.0** 把宿主运行环境从**随包独立 Node** 换成了 **Electron-as-Node**
+（其 `src/main/runtime/electron-node-executable.ts` 注释原文：
+*The Desktop no longer ships a standalone Node.*），而在 Linux 上会撞上
+[electron/electron#46323](https://github.com/electron/electron/issues/46323)：
+Electron 的 Linux 二进制**动态链接全局 glib 并把符号泄漏进进程空间**，
+与 sharp 自带的 libvips 冲突，导致 **sharp 段错误**。
+
+实测（同一个 sharp 0.35.x，同一段 1×1 像素 PNG 编解码）：
+
+| 运行环境 | 结果 |
+|---|---|
+| 独立 Node 26 | ✅ 正常 |
+| Electron 43（v0.11.0 用的就是它） | 💥 **SIGSEGV** |
+| Electron 44 | 💥 **SIGSEGV** |
+
+**v0.10.0 用的是随包独立 Node，所以 sharp 正常 —— 这就是本仓库停在上限的原因。**
+
+**对 Linux 用户来说 v0.11.0 是净退化**：新增的 Office 文档转换没有 Linux 版
+LibreOfficeKit（官方从未发布 `@deepseek-ai/libreoffice-kit-linux-*`）用不了，
+而**原本正常的图片功能反而会崩**。所以继续用 v0.10.0 是更好的选择。
+
+等上游恢复独立 Node、或 electron#46323 被修复且上游跟进，再上调上限即可。
+
+### glibc 要求：≥ 2.28（2018 年发布）
+
+已实测确认。
 
 实测方法：对压缩包内全部 20 个 ELF 文件读取动态符号版本，最高要求为 `GLIBC_2.28`。
 
