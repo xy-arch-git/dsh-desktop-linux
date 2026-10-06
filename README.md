@@ -143,6 +143,43 @@ sharp-libvips            GLIBC_2.28     koffi / system.node         GLIBC_2.4~2.
 `node-pty` / `koffi` / `sharp` / `ripgrep` 都是「平台-架构」维度的预编译 N-API 包。
 因此本产物可在任何近年更新过的 x86_64 Linux 上运行。
 
+### 0.11.0 起：Office 文档转换在 Linux 上不可用
+
+上游 **v0.11.0 新增**了 Office 文档转换（DOCX / XLSX / PPTX → PDF）。它依赖
+`@deepseek-ai/libreoffice-kit`，而官方只发布了这些平台的二进制包：
+
+```
+libreoffice-kit-darwin-arm64 / darwin-x64 / win32-arm64 / win32-x64 / wasm
+```
+
+**没有 `linux-*`** —— 实测 npm registry，`libreoffice-kit-linux-x64-glibc` 返回 404。
+
+所以在本 Linux 产物里调用文档转换会得到：
+
+```json
+{"code":"unavailable","error":"Installed LibreOfficeKit package is incomplete: @deepseek-ai/libreoffice-kit-linux-x64-glibc"}
+```
+
+应用**优雅降级、不会崩溃**，其余功能不受影响。
+
+**这个功能是"一直都没有"，不是"更新后丢失"：**
+
+| 功能 | v0.10.0 | v0.11.0（Linux） |
+|---|---|---|
+| Harness 对话 | ✅ | ✅ |
+| PPT 生成 | ✅ | ✅ |
+| Office 文档转 PDF | —— 当时还没有这个功能 | ❌ 无 Linux 二进制包 |
+
+> **官方代码其实是预期有 Linux 版的。** v0.11.0 新增的
+> `build/office-engine-resolution.mjs` 里正则写的是
+> `/^@deepseek-ai\/libreoffice-kit-(?:darwin|win32|linux)-/u` —— 它会在 Linux 上
+> 去找 `libreoffice-kit-linux-*`。所以这更像官方打包环节的缺口，而非刻意不支持。
+> 等官方发布该包后，本产物只需去掉构建期的那一处放宽即可恢复。
+
+构建期的处置见 [`build-release.sh`](build-release.sh) 第 1.8 节：Linux 上引擎不可用时，
+只跳过依赖 LibreOfficeKit 的「能力探测」与「转 PDF」；载荷加载、Python 冒烟、
+`pip check`、docx/pptx/xlsx **结构检查仍然照常执行**。其他平台行为完全不变。
+
 > ### 关于可复现性
 >
 > 本产物**不是可复现构建**。实测：同一份源码、同一个 `build-release.sh`，
