@@ -130,31 +130,12 @@ minizip nss opus util-linux xdg-utils zlib
 
 ### ⚠️ 版本上限：只支持到上游 0.10.0
 
-本仓库**不会**构建比 [`upstream-ceiling.txt`](upstream-ceiling.txt) 里声明的版本更新的上游发布；
-更高的版本会被每日检查跳过并开一个 issue（不构建、不发布）。
+本仓库**不会**构建比 [`upstream-ceiling.txt`](upstream-ceiling.txt) 声明的版本更新的上游发布 ——
+更高的版本会被每日检查跳过，并在 issue 里记录原因。
 
-原因是上游 **v0.11.0** 把宿主运行环境从**随包独立 Node** 换成了 **Electron-as-Node**
-（其 `src/main/runtime/electron-node-executable.ts` 注释原文：
-*The Desktop no longer ships a standalone Node.*），而在 Linux 上会撞上
-[electron/electron#46323](https://github.com/electron/electron/issues/46323)：
-Electron 的 Linux 二进制**动态链接全局 glib 并把符号泄漏进进程空间**，
-与 sharp 自带的 libvips 冲突，导致 **sharp 段错误**。
-
-实测（同一个 sharp 0.35.x，同一段 1×1 像素 PNG 编解码）：
-
-| 运行环境 | 结果 |
-|---|---|
-| 独立 Node 26 | ✅ 正常 |
-| Electron 43（v0.11.0 用的就是它） | 💥 **SIGSEGV** |
-| Electron 44 | 💥 **SIGSEGV** |
-
-**v0.10.0 用的是随包独立 Node，所以 sharp 正常 —— 这就是本仓库停在上限的原因。**
-
-**对 Linux 用户来说 v0.11.0 是净退化**：新增的 Office 文档转换没有 Linux 版
-LibreOfficeKit（官方从未发布 `@deepseek-ai/libreoffice-kit-linux-*`）用不了，
-而**原本正常的图片功能反而会崩**。所以继续用 v0.10.0 是更好的选择。
-
-等上游恢复独立 Node、或 electron#46323 被修复且上游跟进，再上调上限即可。
+一句话理由：上游自 v0.11.0 起改用 Electron-as-Node 跑宿主，在 Linux 上会触发
+[electron#46323](https://github.com/electron/electron/issues/46323)（glib 符号冲突）导致
+sharp 段错误；v0.10.0 用的是随包独立 Node，所以正常。等上游解决后再上调上限。
 
 ### glibc 要求：≥ 2.28（2018 年发布）
 
@@ -172,43 +153,6 @@ sharp-libvips            GLIBC_2.28     koffi / system.node         GLIBC_2.4~2.
 之所以这么低，是因为**没有任何组件是在构建机上编译的**：Electron 与 Node 是官方预编译产物，
 `node-pty` / `koffi` / `sharp` / `ripgrep` 都是「平台-架构」维度的预编译 N-API 包。
 因此本产物可在任何近年更新过的 x86_64 Linux 上运行。
-
-### 0.11.0 起：Office 文档转换在 Linux 上不可用
-
-上游 **v0.11.0 新增**了 Office 文档转换（DOCX / XLSX / PPTX → PDF）。它依赖
-`@deepseek-ai/libreoffice-kit`，而官方只发布了这些平台的二进制包：
-
-```
-libreoffice-kit-darwin-arm64 / darwin-x64 / win32-arm64 / win32-x64 / wasm
-```
-
-**没有 `linux-*`** —— 实测 npm registry，`libreoffice-kit-linux-x64-glibc` 返回 404。
-
-所以在本 Linux 产物里调用文档转换会得到：
-
-```json
-{"code":"unavailable","error":"Installed LibreOfficeKit package is incomplete: @deepseek-ai/libreoffice-kit-linux-x64-glibc"}
-```
-
-应用**优雅降级、不会崩溃**，其余功能不受影响。
-
-**这个功能是"一直都没有"，不是"更新后丢失"：**
-
-| 功能 | v0.10.0 | v0.11.0（Linux） |
-|---|---|---|
-| Harness 对话 | ✅ | ✅ |
-| PPT 生成 | ✅ | ✅ |
-| Office 文档转 PDF | —— 当时还没有这个功能 | ❌ 无 Linux 二进制包 |
-
-> **官方代码其实是预期有 Linux 版的。** v0.11.0 新增的
-> `build/office-engine-resolution.mjs` 里正则写的是
-> `/^@deepseek-ai\/libreoffice-kit-(?:darwin|win32|linux)-/u` —— 它会在 Linux 上
-> 去找 `libreoffice-kit-linux-*`。所以这更像官方打包环节的缺口，而非刻意不支持。
-> 等官方发布该包后，本产物只需去掉构建期的那一处放宽即可恢复。
-
-构建期的处置见 [`build-release.sh`](build-release.sh) 第 1.8 节：Linux 上引擎不可用时，
-只跳过依赖 LibreOfficeKit 的「能力探测」与「转 PDF」；载荷加载、Python 冒烟、
-`pip check`、docx/pptx/xlsx **结构检查仍然照常执行**。其他平台行为完全不变。
 
 > ### 关于可复现性
 >

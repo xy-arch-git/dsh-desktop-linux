@@ -72,19 +72,11 @@ tar -xzf "$ARCHIVE" -C "$SRC" --strip-components=1
 [[ -f "$SRC/package.json" ]] || die "解包后找不到 package.json"
 
 # --- 1.5 给 Office 运行时补上 Linux 目标 ------------------------------------
-# v0.11.0 起上游新增 office-runtime（一个随包的 Python 载荷），但它的锁只发布
-# win-x64 / mac-arm64 / mac-x64。而 `npm run build` 的第一步就是 office:prepare，
-# 在 Linux 上会直接抛：
-#     Error: Office runtime: unsupported native target linux/x64
-# 整个构建因此失败（这就是自动发布连续失败的根因）。
-#
-# 上游那份锁实际上是官方 deepseek-harness 的 scripts/primary-runtime/lock.json
-# 的删减版：pythonVersion / pythonRelease 相同，9 个通用 wheel 的名称和哈希完全一致，
-# 只是把 Linux 目标删掉了。所以这里把它补回来 —— 值取自官方锁，资源本身都在上游：
-#   Python 独立构建  github.com/astral-sh/python-build-standalone
-#   manylinux wheel  files.pythonhosted.org
-#
-# 锁里已经有 linux-x64 时（上游哪天自己加上）本步自动跳过。
+# v0.11.0 新增 office-runtime，但它的锁只发布 win/mac 目标，于是 `npm run build`
+# 的第一步 office:prepare 在 Linux 上直接抛 "unsupported native target linux/x64"。
+# 该锁是官方 deepseek-harness primary-runtime/lock.json 的删减版（pythonVersion 与
+# 9 个通用 wheel 的名称、哈希完全一致），下面的值即取自那份官方锁。
+# 锁里已有 linux-x64 时自动跳过。
 LOCK="$SRC/scripts/office-runtime/lock.json"
 if [[ -f "$LOCK" ]]; then
   python3 - "$LOCK" <<'PYEOF'
@@ -118,22 +110,10 @@ else
 fi
 
 # --- 1.6 修 afterPack 校验里的 Linux 可执行路径 ------------------------------
-# electron-builder 打完包后，afterPack 会调 verify-packaged-ppt-runtime.cjs 做
-# 一次冒烟校验。它定位「打包后的 Electron 可执行文件」用的是二元判断：
-#     Windows → <appOutDir>/<product>.exe
-#     其他    → <appOutDir>/<product>.app/Contents/Frameworks/<product> Helper.app/...
-# 即「不是 Windows 就一定是 macOS」。Linux 上实际路径是 <appOutDir>/<executableName>，
-# 于是校验抛 "Cannot locate the packaged Electron executable" —— 而那时
-# dist/linux-unpacked/dsh-desktop 其实已经正常生成，构建却整体失败。
-#
-# 注意不能用 productFilename：那是 productName（"DSH Desktop"）sanitize 的结果，
-# Linux 实际用的是 LinuxPackager.executableName —— electron-builder 里定义为
-#     appInfo.sanitizedName.toLowerCase()
-# 即 package.json 的 name（dsh-desktop）。所以这里直接取 packager.executableName。
-#
-# 这与官方 deepseek-harness 的 apps/desktop 里那个
-#   platform === 'win32' ? 'electron.exe' : 'Electron.app/Contents/MacOS/Electron'
-# 是同一类写法问题（同样只考虑 win/mac 两种情况）。
+# verify-packaged-ppt-runtime.cjs 用二元判断定位打包后的 Electron：Windows 取
+# <product>.exe，其余一律走 macOS Helper 路径。Linux 上实际是
+# <appOutDir>/<executableName> —— 注意不是 productFilename（那是 "DSH Desktop"，
+# Linux 用的是包名 dsh-desktop）。
 VERIFY="$SRC/scripts/verify-packaged-ppt-runtime.cjs"
 if [[ -f "$VERIFY" ]] && ! grep -q "platform === 'linux'" "$VERIFY"; then
   python3 - "$VERIFY" <<'PYEOF'
@@ -160,21 +140,9 @@ else
 fi
 
 # --- 1.7 再修两处同样的 win/mac 二元假设 -------------------------------------
-# 上游在 Office 运行时这条链上又写了两处「不是 Windows 就是 macOS」：
-#
-#   scripts/office-runtime/prepare.mjs:91
-#       platform: windows ? 'win32' : 'darwin'
-#     → Linux 上把 runtime.json 的 platform 写成 'darwin'，
-#       随后 afterPack 的 verifyOfficeRuntime 检查
-#       `manifest.platform !== process.platform` 就抛
-#       "Office runtime target mismatch"。
-#
-#   scripts/verify-office-runtime.cjs:41-43
-#       const executable = process.platform === 'darwin' ? <mac Helper> : <appOutDir>/<product>.exe
-#     → Linux 上会去找根本不存在的 <product>.exe（这里是 dsh-desktop.exe）。
-#       同样应该用 packager.executableName。
-#
-# 两处都只在确有必要时改，已在匹配串里带上上下文避免误伤。
+#   office-runtime/prepare.mjs    platform: windows ? 'win32' : 'darwin'
+#   verify-office-runtime.cjs     非 darwin 一律找 <appOutDir>/<product>.exe
+# 前者把 runtime.json 写成 darwin（随后触发 target mismatch），后者找不到可执行文件。
 for pair in "prepare:scripts/office-runtime/prepare.mjs" "verify:scripts/verify-office-runtime.cjs"; do
   kind="${pair%%:*}"; rel="${pair#*:}"; f="$SRC/$rel"
   [[ -f "$f" ]] || { log "跳过 $rel（不存在）"; continue; }
@@ -211,24 +179,11 @@ else:
 PYEOF
 done
 
-# --- 1.8 Linux 上没有 LibreOfficeKit 时，跳过依赖它的 Office 校验 -------------
-# v0.11.0 新增的 Office 文档转换依赖 @deepseek-ai/libreoffice-kit。
-# 官方（deepseek-ai）只发布了这些平台包：
-#     libreoffice-kit-darwin-arm64 / darwin-x64 / win32-arm64 / win32-x64 / wasm
-# 没有 linux-*（实测 npm registry：libreoffice-kit-linux-x64-glibc 返回 404）。
-#
-# 有意思的是官方代码是「预期」有 Linux 版的 —— 新增的
-# build/office-engine-resolution.mjs 里正则写的是
-#     /^@deepseek-ai\/libreoffice-kit-(?:darwin|win32|linux)-/u
-# 所以这更像官方打包环节的缺口，而不是刻意不支持。
-#
-# 应用本身会优雅降级：office-cli capabilities 返回
-#     {"code":"unavailable","error":"Installed LibreOfficeKit package is incomplete: ..."}
-# 只是 afterPack 的冒烟校验把「非零退出」当成失败，导致整个构建挂掉。
-#
-# 这里改成：Linux 上若引擎确实不可用，就只跳过「能力探测」和「转 PDF」，
-# 其余校验（载荷加载、Python 冒烟、pip check、docx/pptx/xlsx 结构检查）照常执行。
-# 其他平台行为完全不变。
+# --- 1.8 Linux 无 LibreOfficeKit 时，跳过依赖它的 Office 校验 -----------------
+# 官方只发布了 libreoffice-kit 的 darwin / win32 / wasm 平台包，没有 linux-*
+# （实测 npm registry 返回 404）。应用会优雅降级报 unavailable，但 afterPack 把
+# 非零退出当失败。这里只跳过「能力探测」与「转 PDF」，载荷加载、Python 冒烟、
+# pip check、docx/pptx/xlsx 结构检查照常执行；其他平台行为不变。
 OFFICE_VERIFY="$SRC/scripts/verify-office-runtime.cjs"
 if [[ -f "$OFFICE_VERIFY" ]] && ! grep -q 'engineAvailable' "$OFFICE_VERIFY"; then
   python3 - "$OFFICE_VERIFY" <<'PYEOF'
@@ -334,18 +289,10 @@ EOF
 
 # 自检：结构与体积
 [[ -x "$STAGE/app/dsh-desktop" ]] || die "app/dsh-desktop 不可执行"
-  # 随包 Node 运行时。上游在 v0.11.0 改了架构：不再随包独立 Node，宿主改为
-  # 用 Electron 自身以 ELECTRON_RUN_AS_NODE=1 运行。其源码注释原文：
-  #   The Desktop no longer ships a standalone Node.
-  #   The Electron binary that runs Node work ... always with ELECTRON_RUN_AS_NODE=1.
-  # （src/main/runtime/electron-node-executable.ts）
-  #
-  # 所以两种形态都接受，只做记录 —— 不能像以前那样把独立 Node 当硬要求：
-  #   ≤ v0.10.0 → app/resources/**/node_modules/node/bin/node（独立二进制）
-  #   ≥ v0.11.0 → 没有它；宿主就是 app/dsh-desktop 本身
-  #
-  # 注意：≥ v0.11.0 在 Linux 上有 sharp 段错误问题（electron#46323），
-  # 详见 upstream-ceiling.txt —— 这里的放宽只是为了让构建流程本身不挡路。
+    # 随包 Node。上游 v0.11.0 起不再随包独立 Node，宿主改用 Electron 自身
+    # （ELECTRON_RUN_AS_NODE=1）。两种形态都接受，只做记录：
+    #   ≤ v0.10.0 → app/resources/**/node_modules/node/bin/node
+    #   ≥ v0.11.0 → 没有它，宿主就是 app/dsh-desktop 本身
   NODE_RT="$(find "$STAGE/app/resources" -path '*/node_modules/node/bin/node' -type f -print -quit 2>/dev/null || true)"
   if [[ -n "$NODE_RT" ]]; then
     log "随包 Node: ${NODE_RT#"$STAGE/app/"} ($(du -h "$NODE_RT" | cut -f1))"
