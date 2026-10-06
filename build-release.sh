@@ -334,13 +334,24 @@ EOF
 
 # 自检：结构与体积
 [[ -x "$STAGE/app/dsh-desktop" ]] || die "app/dsh-desktop 不可执行"
-  # 随包 Node 运行时。它的位置随上游 electron-builder 配置变化，所以不写死路径：
-  #   v0.9.2  → app/resources/app/node_modules/node/bin/node
-  #   v0.10.0 → app/resources/app.asar.unpacked/node_modules/node/bin/node
+  # 随包 Node 运行时。上游在 v0.11.0 改了架构：不再随包独立 Node，宿主改为
+  # 用 Electron 自身以 ELECTRON_RUN_AS_NODE=1 运行。其源码注释原文：
+  #   The Desktop no longer ships a standalone Node.
+  #   The Electron binary that runs Node work ... always with ELECTRON_RUN_AS_NODE=1.
+  # （src/main/runtime/electron-node-executable.ts）
+  #
+  # 所以两种形态都接受，只做记录 —— 不能像以前那样把独立 Node 当硬要求：
+  #   ≤ v0.10.0 → app/resources/**/node_modules/node/bin/node（独立二进制）
+  #   ≥ v0.11.0 → 没有它；宿主就是 app/dsh-desktop 本身
+  #
+  # 注意：≥ v0.11.0 在 Linux 上有 sharp 段错误问题（electron#46323），
+  # 详见 upstream-ceiling.txt —— 这里的放宽只是为了让构建流程本身不挡路。
   NODE_RT="$(find "$STAGE/app/resources" -path '*/node_modules/node/bin/node' -type f -print -quit 2>/dev/null || true)"
-  [[ -n "$NODE_RT" ]] \
-    || die "缺少随包 Node 运行时（app/resources 下找不到 node_modules/node/bin/node）"
-  log "随包 Node: ${NODE_RT#"$STAGE/app/"} ($(du -h "$NODE_RT" | cut -f1))"
+  if [[ -n "$NODE_RT" ]]; then
+    log "随包 Node: ${NODE_RT#"$STAGE/app/"} ($(du -h "$NODE_RT" | cut -f1))"
+  else
+    log "无随包独立 Node —— 宿主由 Electron 自身承担（v0.11.0+ 的架构）"
+  fi
 log "发布树大小: $(du -sh "$STAGE" | cut -f1)"
 
 # --- 5. 压缩 + 校验和 ------------------------------------------------------
