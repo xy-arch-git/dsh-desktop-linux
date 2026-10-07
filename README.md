@@ -133,7 +133,7 @@ minizip nss opus util-linux xdg-utils zlib
 本仓库**不会**构建比 [`upstream-ceiling.txt`](upstream-ceiling.txt) 声明的版本更新的上游发布 ——
 更高的版本会被每日检查跳过，并在 issue 里记录原因。
 
-一句话理由：上游自 v0.11.0 起改用 Electron-as-Node 跑宿主，在 Linux 上会触发
+上游自 v0.11.0 起改用 Electron-as-Node 跑宿主，在 Linux 上会触发
 [electron#46323](https://github.com/electron/electron/issues/46323)（glib 符号冲突）导致
 sharp 段错误；v0.10.0 用的是随包独立 Node，所以正常。等上游解决后再上调上限。
 
