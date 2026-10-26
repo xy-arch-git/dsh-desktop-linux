@@ -183,7 +183,7 @@ done
 # 官方只发布了 libreoffice-kit 的 darwin / win32 / wasm 平台包，没有 linux-*
 # （实测 npm registry 返回 404）。应用会优雅降级报 unavailable，但 afterPack 把
 # 非零退出当失败。这里只跳过「能力探测」与「转 PDF」，载荷加载、Python 冒烟、
-# pip check、docx/pptx/xlsx 结构检查照常执行；其他平台行为不变。
+# pip check 照常执行；其他平台行为不变。
 OFFICE_VERIFY="$SRC/scripts/verify-office-runtime.cjs"
 if [[ -f "$OFFICE_VERIFY" ]] && ! grep -q 'engineAvailable' "$OFFICE_VERIFY"; then
   python3 - "$OFFICE_VERIFY" <<'PYEOF'
@@ -191,18 +191,9 @@ import sys
 path = sys.argv[1]
 s = open(path, encoding='utf-8').read()
 
-old_caps = """    await execFile(executable, [cli, 'capabilities', '--json'], options)
-    for (const extension of ['docx', 'pptx', 'xlsx']) {
-      const input = path.join(scratch, `sample.${extension}`)
-      await execFile(python, ['-I', '-B', checker, input, '--contains', 'Office runtime smoke'], options)
-      await execFile(executable, [cli, 'convert', '--input', input, '--output', path.join(scratch, `${extension}.pdf`)], options)
-      const pdf = await fs.readFile(path.join(scratch, `${extension}.pdf`))
-      if (pdf.subarray(0, 5).toString() !== '%PDF-') throw new Error(`Office ${extension} conversion did not produce PDF`)
-    }
-    console.log('Packaged Office authoring, structure checks and DOCX/PPTX/XLSX PDF conversion passed')"""
-
-new_caps = """    // Linux: 官方未发布 @deepseek-ai/libreoffice-kit-linux-*，应用会报 unavailable。
-    // 此时跳过依赖 LibreOfficeKit 的能力探测与 PDF 转换，其余校验照常。
+# 1) capabilities 调用外包一层 Linux 容错
+old_cap = "    await execFile(executable, [cli, 'capabilities', '--json'], options)"
+new_cap = """    // Linux: 官方未发布 @deepseek-ai/libreoffice-kit-linux-*，应用会报 unavailable。
     let engineAvailable = true
     try {
       await execFile(executable, [cli, 'capabilities', '--json'], options)
@@ -211,30 +202,110 @@ new_caps = """    // Linux: 官方未发布 @deepseek-ai/libreoffice-kit-linux-*
       if (process.platform !== 'linux' || !/libreoffice-kit-linux/u.test(detail)) throw error
       engineAvailable = false
       console.warn('[build] Linux 无官方 LibreOfficeKit 包，跳过 Office 转 PDF 校验：', detail.trim().slice(0, 300))
-    }
-    for (const extension of ['docx', 'pptx', 'xlsx']) {
-      const input = path.join(scratch, `sample.${extension}`)
-      await execFile(python, ['-I', '-B', checker, input, '--contains', 'Office runtime smoke'], options)
-      if (!engineAvailable) continue
-      await execFile(executable, [cli, 'convert', '--input', input, '--output', path.join(scratch, `${extension}.pdf`)], options)
-      const pdf = await fs.readFile(path.join(scratch, `${extension}.pdf`))
-      if (pdf.subarray(0, 5).toString() !== '%PDF-') throw new Error(`Office ${extension} conversion did not produce PDF`)
-    }
-    console.log(engineAvailable
-      ? 'Packaged Office authoring, structure checks and DOCX/PPTX/XLSX PDF conversion passed'
-      : 'Packaged Office authoring and document structure checks passed; PDF conversion skipped (no published Linux LibreOfficeKit)')"""
+    }"""
 
-if new_caps in s:
-    print('  ⏭ verify-office-runtime.cjs 已有 engineAvailable 逻辑')
-elif old_caps in s:
-    open(path, 'w', encoding='utf-8').write(s.replace(old_caps, new_caps, 1))
+# 2) 循环开头加短路（锚点对 v0.11/v0.12 都成立）
+old_loop = "    for (const extension of ['docx', 'pptx', 'xlsx']) {"
+new_loop = old_loop + "\n      if (!engineAvailable) continue"
+
+if new_cap in s:
+    print('  ⏭ 已有 engineAvailable 逻辑')
+elif old_cap in s and old_loop in s:
+    s = s.replace(old_cap, new_cap, 1).replace(old_loop, new_loop, 1)
+    open(path, 'w', encoding='utf-8').write(s)
     print('  ✅ verify-office-runtime.cjs: Linux 上容忍 LibreOfficeKit 缺失')
 else:
-    print('  ⚠ verify-office-runtime.cjs 未匹配，可能上游已改；跳过')
+    print('  ⚠ 锚点未匹配，可能上游又改了；跳过')
 PYEOF
   log "Office 冒烟校验已支持 Linux 降级"
 else
   log "Office 冒烟校验无需修改或已支持降级"
+fi
+
+# --- 1.9 恢复随包独立 Node（Linux 上绕开 Electron 的 sharp 段错误）-------------
+# 上游自 v0.11.0 起让宿主跑在 Electron 自身里（ELECTRON_RUN_AS_NODE=1）。Electron 的
+# Linux 二进制会动态链接全局 glib 并把符号泄漏进进程空间，与 sharp 的 libvips 冲突
+# → SIGSEGV（electron#46323，未修）。v0.10.0 用随包独立 Node 时正常，这里把它加回来：
+#   1. dependencies 加回 node（electron-builder 只打包声明过的依赖）
+#   2. bundledNodePath() 指回它 —— index.ts 里 10 处调用都走这个函数
+#   3. asarUnpack 放行，二进制必须解包才能执行
+# ELECTRON_RUN_AS_NODE 不用处理：它只对 Electron 二进制有意义，普通 node 会忽略。
+if [[ -f "$SRC/src/main/index.ts" ]] && grep -q 'return electronNodeExecutable(process.execPath)' "$SRC/src/main/index.ts"; then
+  python3 - "$SRC" <<'PYEOF'
+import json, pathlib, sys
+src = pathlib.Path(sys.argv[1])
+
+idx = src / 'src/main/index.ts'
+s = idx.read_text(encoding='utf-8')
+old = """function bundledNodePath(): string {
+  return electronNodeExecutable(process.execPath)
+}"""
+new = """function bundledNodePath(): string {
+  // 不用 Electron 跑 Node：其 Linux 二进制会泄漏 glib 符号，与 sharp 的 libvips
+  // 冲突导致段错误（electron/electron#46323）。用随包独立 Node。
+  const executable = process.platform === 'win32' ? 'node.exe' : 'node'
+  return join(bundledRuntimeRoot(), 'node_modules', 'node', 'bin', executable)
+}"""
+if old not in s:
+    print('  ⚠ bundledNodePath 未匹配，跳过'); raise SystemExit(0)
+idx.write_text(s.replace(old, new, 1), encoding='utf-8')
+print('  ✅ bundledNodePath 指回随包独立 Node')
+
+pkg_path = src / 'package.json'
+pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
+deps = pkg.setdefault('dependencies', {})
+if 'node' not in deps:
+    deps['node'] = '24.9.0'
+    print('  ✅ dependencies 加 node@24.9.0')
+au = pkg['build'].setdefault('asarUnpack', [])
+if 'node_modules/node/**/*' not in au:
+    au.append('node_modules/node/**/*')
+    print('  ✅ asarUnpack 加 node_modules/node/**/*')
+pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+PYEOF
+  # 改了 dependencies 就必须同步锁文件，否则 npm ci 会因不同步而失败
+  ( cd "$SRC" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund >/dev/null 2>&1 \
+      || die "同步 package-lock.json 失败" )
+  log "已恢复随包独立 Node，并同步锁文件"
+else
+  log "上游已自带独立 Node 或结构已变，跳过 1.9"
+fi
+
+# --- 1.10 修 verify-packaged-harness.cjs 里同样的可执行路径判断 -----------------
+# v0.12.x 新增的 afterPack 校验，写法与之前几处相同（非 darwin 一律取 <product>.exe）。
+VERIFY_HARNESS="$SRC/scripts/verify-packaged-harness.cjs"
+if [[ -f "$VERIFY_HARNESS" ]] && ! grep -q "electronPlatformName === 'linux'" "$VERIFY_HARNESS"; then
+  python3 - "$VERIFY_HARNESS" <<'PYEOF'
+import sys
+path = sys.argv[1]
+s = open(path, encoding='utf-8').read()
+old = """  const executable = context.electronPlatformName === 'darwin'
+    ? path.join(contents, 'Frameworks', `${product} Helper.app`, 'Contents', 'MacOS', `${product} Helper`)
+    : path.join(context.appOutDir, `${product}.exe`)"""
+new = """  const executable = context.electronPlatformName === 'darwin'
+    ? path.join(contents, 'Frameworks', `${product} Helper.app`, 'Contents', 'MacOS', `${product} Helper`)
+    : context.electronPlatformName === 'linux'
+      ? path.join(context.appOutDir, context.packager.executableName)
+      : path.join(context.appOutDir, `${product}.exe`)"""
+if new in s:
+    print('  \u23ed 已含 linux 分支')
+elif old in s:
+    open(path, 'w', encoding='utf-8').write(s.replace(old, new, 1))
+    print('  \u2705 verify-packaged-harness.cjs: 可执行路径补上 linux')
+else:
+    print('  \u26a0 未匹配，可能上游已改')
+PYEOF
+  log "harness 校验的可执行路径已打补丁"
+else
+  log "harness 校验无需修改或已含 Linux 分支"
+fi
+
+# --- 1.11 Linux 无 LibreOfficeKit 时跳过 Office 模板预览校验 -------------------
+# v0.12.x 的 PPT 运行时校验会调 renderOfficeTemplatePreview，它依赖 LibreOfficeKit
+# ——官方同样没有 linux-* 包。只跳过这一段，前面的预览清单、PPT 结构校验照常。
+VERIFY_PPT="$SRC/scripts/verify-packaged-ppt-runtime.cjs"
+if [[ -f "$VERIFY_PPT" ]] && ! grep -q '无需 LibreOfficeKit' "$VERIFY_PPT"; then
+  python3 "$(dirname "${BASH_SOURCE[0]}")/patch-office-preview.py" "$VERIFY_PPT" || true
 fi
 
 # --- 2. npm ci -------------------------------------------------------------
@@ -246,6 +317,7 @@ fi
 # 这两个开关在 npm 10/11 上只是未使用的配置项，不会报错。
 log "npm ci（约 1GB 下载，首次较慢）"
 ( cd "$SRC" && npm ci --allow-remote=all --dangerously-allow-all-scripts )
+
 
 # --- 3. 打包 ---------------------------------------------------------------
 log "electron-vite build + electron-builder --dir"

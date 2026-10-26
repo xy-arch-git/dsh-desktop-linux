@@ -1,14 +1,15 @@
 # 支持的上游版本上限。auto-release.yml 只构建不超过这个版本的上游发布；
-# 更高的版本会被跳过并开一个 issue（不失败、不发布）。细节见那个 issue。
+# 更高的版本会被跳过并开一个 issue（不失败、不发布）。
 #
-# 为什么是 0.10.0：
-#   上游 v0.11.0 起把宿主从「随包独立 Node」改成 Electron-as-Node，在 Linux 上会触发
-#   electron/electron#46323（Electron 的二进制动态链接全局 glib 并泄漏符号，
-#   与 sharp 自带的 libvips 冲突）→ sharp 段错误。
-#   实测同一段 sharp 编解码：独立 Node 26 正常；Electron 43 / 44 均 SIGSEGV。
-#   v0.10.0 用随包独立 Node，所以正常。
+# 0.10.0 → 0.12.1：从 0.11.0 起上游改为用 Electron 跑宿主，Linux 上会让 sharp
+# 段错误（electron/electron#46323）。build-release.sh 的 1.9 段把随包独立 Node
+# 加了回来，实测 sharp 正常（Electron 43 下 SIGSEGV，独立 Node 24.9.0 下通过）。
+# 会话格式仍是 v4，与 0.10.0 相同，历史会话不受影响。
 #
-# 什么时候上调：上游恢复独立 Node，或 electron#46323 被修复且上游跟进。
-# 改完这个版本号，同时更新 README 的兼容性说明。
+# 已知缺失（Linux）：Office 文档转换与模板预览渲染依赖官方从未发布的
+# @deepseek-ai/libreoffice-kit-linux-*，不可用；构建时相应校验已跳过（1.8 / 1.11）。
+#
+# 每次上游改动 bundledNodePath() / harness-runtime.ts / afterPack 校验脚本时，
+# 都要重新核对 1.5–1.11 是否仍然成立（不成立会打印 ⚠ 而不是静默失败）。
 
-0.10.0
+0.12.1

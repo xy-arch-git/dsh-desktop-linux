@@ -128,14 +128,13 @@ minizip nss opus util-linux xdg-utils zlib
 
 ## 兼容性
 
-### ⚠️ 版本上限：只支持到上游 0.10.0
+### ⚠️ 版本上限：当前支持到上游 0.12.1
 
 本仓库**不会**构建比 [`upstream-ceiling.txt`](upstream-ceiling.txt) 声明的版本更新的上游发布 ——
-更高的版本会被每日检查跳过，并在 issue 里记录原因。
+更高的版本会被跳过，并在 issue 里记录原因。
 
-上游自 v0.11.0 起改用 Electron-as-Node 跑宿主，在 Linux 上会触发
-[electron#46323](https://github.com/electron/electron/issues/46323)（glib 符号冲突）导致
-sharp 段错误；v0.10.0 用的是随包独立 Node，所以正常。等上游解决后再上调上限。
+**Linux 上已知缺失：Office 文档转换与模板预览渲染**（依赖官方从未发布的
+`@deepseek-ai/libreoffice-kit-linux-*`）。这两个功能在 0.10.0 里本来也没有。
 
 ### glibc 要求：≥ 2.28（2018 年发布）
 
