@@ -61,7 +61,10 @@ jobs:
       - name: 安装构建依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends imagemagick zstd
+          # fonts-noto-cjk：上游 check-templates.py 会校验 Office 模板预览里的中文字形覆盖；
+          # runner 默认没有 CJK 字体，渲染成空白后断言覆盖率为 0.0，构建直接失败。
+          sudo apt-get install -y --no-install-recommends imagemagick zstd fonts-noto-cjk
+          fc-cache -f >/dev/null 2>&1 || true
 
       - name: 解析目标版本
         id: v
