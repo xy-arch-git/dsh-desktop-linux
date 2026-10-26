@@ -63,7 +63,10 @@ jobs:
           sudo apt-get update
           # fonts-noto-cjk：上游 check-templates.py 会校验 Office 模板预览里的中文字形覆盖；
           # runner 默认没有 CJK 字体，渲染成空白后断言覆盖率为 0.0，构建直接失败。
-          sudo apt-get install -y --no-install-recommends imagemagick zstd fonts-noto-cjk
+          # bubblewrap：上游 office-runtime 的 probe.cjs 会跑 DOCX 工作流，需要 DSH 的
+          # workspace-write 沙箱后端。runner 既无 bubblewrap 也无 Landlock，会直接报
+          # SANDBOX_UNAVAILABLE 拒绝运行，导致构建失败。
+          sudo apt-get install -y --no-install-recommends imagemagick zstd fonts-noto-cjk bubblewrap
           fc-cache -f >/dev/null 2>&1 || true
 
       - name: 解析目标版本
