@@ -300,19 +300,10 @@ deps = pkg.setdefault('dependencies', {})
 if 'node' not in deps:
     deps['node'] = '24.9.0'
     print('  ✅ dependencies 加回 node@24.9.0')
-# dsh-ppt 声明依赖 typescript，但它只是根 devDependency，打包时会被剪掉，
-# afterPack 的依赖校验就会报「Packaged dependency typescript is missing」。
-# 提到 dependencies 让它进包。
-if 'typescript' not in deps:
-    deps['typescript'] = '5.9.3'
-    print('  ✅ dependencies 加 typescript（dsh-ppt 的运行时依赖）')
-# 必须同时从 devDependencies 删掉：同一个包同时出现在两处时，electron-builder
-# 仍按 dev 依赖剪掉，产物里就没有 typescript，afterPack 校验会失败。
-dev = pkg.get('devDependencies') or {}
-if 'typescript' in dev:
-    dev.pop('typescript')
-    pkg['devDependencies'] = dev
-    print('  ✅ devDependencies 移除 typescript（否则仍会被剪掉）')
+# 注意：不要试图把 typescript 加进 dependencies 让它进包 —— electron-builder 会
+# 依据 lockfile 的 dev 标记剪掉它，加了也没用（实测两版都失败）。typescript 只是
+# dsh-ppt 编译模板的构建期依赖，在下面的 cp 步骤里从它的 dependencies 中删掉，
+# 让 afterPack 的依赖闭包校验不再要求它。
 # ppt 的 from/to 注入内容不走 asarUnpack（实测：加了显式规则也不解包），
 # 而宿主跑在普通 Node 上读不到 asar 内的模块。改为在打包前把构建产物直接
 # cp 进 node_modules（见下面的「打包」步骤），这里同步去掉注入与排除规则。
@@ -423,6 +414,10 @@ d = json.load(open(pkg_path, encoding='utf-8'))
 d.pop('devDependencies', None)
 deps = d.get('dependencies') or {}
 dropped = [k for k in deps if not os.path.isdir(os.path.join(nm, *k.split('/')))]
+# typescript 是构建期依赖（模板编译），electron-builder 会把它当 dev 剪掉；
+# 留着声明会让 afterPack 的依赖闭包校验失败。
+if 'typescript' in deps:
+    dropped.append('typescript')
 for k in dropped:
     deps.pop(k, None)
 if dropped:
