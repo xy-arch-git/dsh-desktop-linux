@@ -248,23 +248,40 @@ jobs:
           catalog_member=$(grep -m1 '/dsh-session-format-catalog/lib/index.js$' "$listing" || true)
           rm -f "$listing"
 
-          if [ -z "$session_member" ]; then
-            echo "::error::产物里找不到 @deepseek-ai/dsh-session"
+          # v0.12.1 起上游的 asarUnpack 只解包原生文件，这两个 JS 被打进了 app.asar，
+          # 压缩包清单里自然没有它们。这时改从构建树读同一份代码（版本必然一致）。
+          src_session=".build/src/node_modules/@deepseek-ai/dsh-session/lib/index.js"
+          src_catalog=$(find .build/src/node_modules -path '*/dsh-session-format-catalog/lib/index.js' -print -quit 2>/dev/null || true)
+
+          # 从产物或构建树取一个成员的内容
+          read_member() {
+            local member="$1" path="$2"
+            if [ -n "$member" ]; then
+              tar --zstd -xOf "$tar" "$member"
+            elif [ -n "$path" ] && [ -f "$path" ]; then
+              cat "$path"
+            else
+              return 1
+            fi
+          }
+
+          if [ -z "$session_member" ] && [ ! -f "$src_session" ]; then
+            echo "::error::产物和构建树里都找不到 @deepseek-ai/dsh-session"
             exit 1
           fi
-          if [ -z "$catalog_member" ]; then
-            echo "::error::产物里找不到 dsh-session-format-catalog"
+          if [ -z "$catalog_member" ] && [ -z "$src_catalog" ]; then
+            echo "::error::产物和构建树里都找不到 dsh-session-format-catalog"
             exit 1
           fi
 
-          new_fmt=$(tar --zstd -xOf "$tar" "$session_member" \
+          new_fmt=$(read_member "$session_member" "$src_session" \
             | grep -oP 'SESSION_FORMAT_VERSION\s*=\s*\K[0-9]+' || true)
           if [ -z "$new_fmt" ]; then
-            echo "::error::无法从产物里解析会话格式版本（$session_member）"
+            echo "::error::无法解析会话格式版本"
             exit 1
           fi
 
-          edges=$(tar --zstd -xOf "$tar" "$catalog_member" \
+          edges=$(read_member "$catalog_member" "$src_catalog" \
             | grep -oP 'sessionFormatV\K[0-9]+ToV[0-9]+' | sort -u | tr '\n' ' ' || true)
           echo "迁移链: ${edges:-（无）}"
 
