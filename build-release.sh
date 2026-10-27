@@ -294,6 +294,12 @@ if old_node in s:
 
 pkg_path = src / 'package.json'
 pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
+# electron-builder 只打包 package.json 里声明为 dependencies 的包；
+# 不声明的话 node_modules/node 会被当成多余目录丢掉（0.12.1-4 就是这么失败的）。
+deps = pkg.setdefault('dependencies', {})
+if 'node' not in deps:
+    deps['node'] = '24.9.0'
+    print('  ✅ dependencies 加回 node@24.9.0')
 au = pkg['build'].setdefault('asarUnpack', [])
 # 宿主跑在独立 Node 上，普通 Node 没有 asar 支持：代码留在 app.asar 里就读不到。
 # 必须全量解包 node_modules（0.10.0 就是这么做的，它的 app.asar 只有 6.1MB）。
