@@ -300,6 +300,21 @@ deps = pkg.setdefault('dependencies', {})
 if 'node' not in deps:
     deps['node'] = '24.9.0'
     print('  ✅ dependencies 加回 node@24.9.0')
+# ppt 的 from/to 注入内容不走 asarUnpack（实测：加了显式规则也不解包），
+# 而宿主跑在普通 Node 上读不到 asar 内的模块。改为在打包前把构建产物直接
+# cp 进 node_modules（见下面的「打包」步骤），这里同步去掉注入与排除规则。
+files_cfg = pkg['build'].get('files')
+if isinstance(files_cfg, list):
+    cleaned = []
+    for item in files_cfg:
+        if isinstance(item, str) and item in ('!node_modules/dsh-ppt{,/**}', '!node_modules/dsh-ppt-composer{,/**}'):
+            continue
+        if isinstance(item, dict) and str(item.get('to', '')).startswith('node_modules/dsh-ppt'):
+            continue
+        cleaned.append(item)
+    if len(cleaned) != len(files_cfg):
+        pkg['build']['files'] = cleaned
+        print('  ✅ files 去掉 ppt 的排除项与 from/to 注入')
 au = pkg['build'].setdefault('asarUnpack', [])
 # 宿主跑在独立 Node 上，普通 Node 没有 asar 支持：代码留在 app.asar 里就读不到。
 # 必须全量解包 node_modules（0.10.0 就是这么做的，它的 app.asar 只有 6.1MB）。
@@ -374,8 +389,21 @@ log "npm ci（约 1GB 下载，首次较慢）"
 
 
 # --- 3. 打包 ---------------------------------------------------------------
-log "electron-vite build + electron-builder --dir"
-( cd "$SRC" && npm run package:dir )
+# 分三步而不是 `npm run package:dir`：ppt 的构建产物要先落进 node_modules，
+# 才能被 asarUnpack 解包（electron-builder 的 files from/to 注入不吃 asarUnpack）。
+log "构建（office:prepare + ppt:build + electron-vite build）"
+( cd "$SRC" && npm run build )
+
+log "把 ppt 构建产物放进 node_modules"
+for pkg in dsh-ppt dsh-ppt-composer; do
+  src="$SRC/.build/ppt-runtime/packages/$pkg"
+  [[ -d "$src" ]] || die "缺少 ppt 构建产物：$pkg"
+  rm -rf "$SRC/node_modules/$pkg"
+  cp -r "$src" "$SRC/node_modules/$pkg"
+done
+
+log "electron-builder --dir"
+( cd "$SRC" && npx electron-builder --dir )
 
 [[ -x "$SRC/dist/linux-unpacked/dsh-desktop" ]] \
   || die "未找到 dist/linux-unpacked/dsh-desktop"
