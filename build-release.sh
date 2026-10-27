@@ -208,6 +208,24 @@ new_cap = """    // Linux: 官方未发布 @deepseek-ai/libreoffice-kit-linux-*�
 old_loop = "    for (const extension of ['docx', 'pptx', 'xlsx']) {"
 new_loop = old_loop + "\n      if (!engineAvailable) continue"
 
+# 0) Linux 上整段跳过：Office 依赖的 LibreOfficeKit 没有官方 Linux 构建，
+#    功能本就不存在；而 probe.cjs 需要 workspace-write 沙箱后端，在 CI runner 上
+#    （bubblewrap 受 AppArmor 限制、无 Landlock）必然失败。
+old_ap = "async function afterPack(context) {"
+new_ap = '''async function afterPack(context) {
+  // Linux: Office 功能不可用（无官方 LibreOfficeKit），跳过整段运行时校验。
+  if (process.platform === 'linux') {
+    console.warn('[build] Linux 上跳过 Office 运行时校验（无 LibreOfficeKit）')
+    return
+  }'''
+if new_ap in s:
+    print('  ⏭ afterPack 已含 Linux 跳过')
+elif old_ap in s:
+    s = s.replace(old_ap, new_ap, 1)
+    print('  ✅ afterPack 在 Linux 上整段跳过')
+else:
+    print('  ⚠ afterPack 锚点未匹配')
+
 if new_cap in s:
     print('  ⏭ 已有 engineAvailable 逻辑')
 elif old_cap in s and old_loop in s:
