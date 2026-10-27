@@ -303,10 +303,20 @@ if 'node' not in deps:
 au = pkg['build'].setdefault('asarUnpack', [])
 # 宿主跑在独立 Node 上，普通 Node 没有 asar 支持：代码留在 app.asar 里就读不到。
 # 必须全量解包 node_modules（0.10.0 就是这么做的，它的 app.asar 只有 6.1MB）。
+changed = False
 if 'node_modules/**/*' not in au:
     au.append('node_modules/**/*')
-    pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    changed = True
     print('  ✅ asarUnpack 加 node_modules/**/*（全量解包）')
+# electron-builder 用 files 的 from/to 注入的这两个包，node_modules/**/* 覆盖不到，
+# 会被打进 app.asar；而宿主跑在独立 Node 上，读不到 asar 内的模块，必须显式解包。
+for pat in ('node_modules/dsh-ppt/**/*', 'node_modules/dsh-ppt-composer/**/*'):
+    if pat not in au:
+        au.append(pat)
+        changed = True
+        print(f'  ✅ asarUnpack 加 {pat}')
+if changed:
+    pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 PYEOF
   ( cd "$SRC" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund >/dev/null 2>&1 \
       || die "同步 package-lock.json 失败" )
