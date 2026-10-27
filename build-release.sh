@@ -300,6 +300,12 @@ deps = pkg.setdefault('dependencies', {})
 if 'node' not in deps:
     deps['node'] = '24.9.0'
     print('  ✅ dependencies 加回 node@24.9.0')
+# dsh-ppt 声明依赖 typescript，但它只是根 devDependency，打包时会被剪掉，
+# afterPack 的依赖校验就会报「Packaged dependency typescript is missing」。
+# 提到 dependencies 让它进包。
+if 'typescript' not in deps:
+    deps['typescript'] = '5.9.3'
+    print('  ✅ dependencies 加 typescript（dsh-ppt 的运行时依赖）')
 # ppt 的 from/to 注入内容不走 asarUnpack（实测：加了显式规则也不解包），
 # 而宿主跑在普通 Node 上读不到 asar 内的模块。改为在打包前把构建产物直接
 # cp 进 node_modules（见下面的「打包」步骤），这里同步去掉注入与排除规则。
@@ -395,11 +401,30 @@ log "构建（office:prepare + ppt:build + electron-vite build）"
 ( cd "$SRC" && npm run build )
 
 log "把 ppt 构建产物放进 node_modules"
+# 注意：构建产物里的 package.json 带着开发期依赖（如 typescript），而这些没装，
+# afterPack 的依赖校验会报「Packaged dependency typescript is missing」。
+# 这里清掉 devDependencies，并丢弃 node_modules 里不存在的运行时依赖。
 for pkg in dsh-ppt dsh-ppt-composer; do
   src="$SRC/.build/ppt-runtime/packages/$pkg"
   [[ -d "$src" ]] || die "缺少 ppt 构建产物：$pkg"
   rm -rf "$SRC/node_modules/$pkg"
   cp -r "$src" "$SRC/node_modules/$pkg"
+  python3 - "$SRC/node_modules/$pkg/package.json" "$SRC/node_modules" <<'PYEOF'
+import json, os, sys
+pkg_path, nm = sys.argv[1], sys.argv[2]
+d = json.load(open(pkg_path, encoding='utf-8'))
+d.pop('devDependencies', None)
+deps = d.get('dependencies') or {}
+dropped = [k for k in deps if not os.path.isdir(os.path.join(nm, *k.split('/')))]
+for k in dropped:
+    deps.pop(k, None)
+if dropped:
+    print(f'    {os.path.basename(pkg_path)}: 丢弃未安装的依赖 {dropped}')
+if deps or 'dependencies' in d:
+    d['dependencies'] = deps
+json.dump(d, open(pkg_path, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+open(pkg_path, 'a', encoding='utf-8').write('\n')
+PYEOF
 done
 
 log "electron-builder --dir"
