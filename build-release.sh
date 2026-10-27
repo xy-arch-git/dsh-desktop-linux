@@ -261,8 +261,17 @@ old = """function bundledNodePath(): string {
 new = """function bundledNodePath(): string {
   // 不用 Electron 跑 Node：其 Linux 二进制会泄漏 glib 符号，与 sharp 的 libvips
   // 冲突导致段错误（electron/electron#46323）。用随包独立 Node。
+  //
+  // 注意不能直接用 bundledRuntimeRoot()：0.12.1 把整个运行时塞进了 app.asar
+  //（0.12.1 的 app.asar 有 369MB），而 app.getAppPath() 返回的是 app.asar
+  //  这个「文件」，拼出 .../app.asar/node_modules/node/bin/node 会 ENOTDIR。
+  //  独立 Node 是 asarUnpack 出来的，必须从 app.asar.unpacked 取。
+  //（0.10.0 没这问题是因为它那时的 bundledRuntimeRoot() 会解析到 unpacked 根。）
+  const root = app.isPackaged
+    ? join(process.resourcesPath, 'app.asar.unpacked')
+    : bundledRuntimeRoot()
   const executable = process.platform === 'win32' ? 'node.exe' : 'node'
-  return join(bundledRuntimeRoot(), 'node_modules', 'node', 'bin', executable)
+  return join(root, 'node_modules', 'node', 'bin', executable)
 }"""
 if old not in s:
     print('  ⚠ bundledNodePath 未匹配，跳过'); raise SystemExit(0)
