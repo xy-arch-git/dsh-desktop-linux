@@ -306,6 +306,13 @@ if 'node' not in deps:
 if 'typescript' not in deps:
     deps['typescript'] = '5.9.3'
     print('  ✅ dependencies 加 typescript（dsh-ppt 的运行时依赖）')
+# 必须同时从 devDependencies 删掉：同一个包同时出现在两处时，electron-builder
+# 仍按 dev 依赖剪掉，产物里就没有 typescript，afterPack 校验会失败。
+dev = pkg.get('devDependencies') or {}
+if 'typescript' in dev:
+    dev.pop('typescript')
+    pkg['devDependencies'] = dev
+    print('  ✅ devDependencies 移除 typescript（否则仍会被剪掉）')
 # ppt 的 from/to 注入内容不走 asarUnpack（实测：加了显式规则也不解包），
 # 而宿主跑在普通 Node 上读不到 asar 内的模块。改为在打包前把构建产物直接
 # cp 进 node_modules（见下面的「打包」步骤），这里同步去掉注入与排除规则。
