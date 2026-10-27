@@ -285,9 +285,15 @@ if 'node' not in deps:
     deps['node'] = '24.9.0'
     print('  ✅ dependencies 加 node@24.9.0')
 au = pkg['build'].setdefault('asarUnpack', [])
-if 'node_modules/node/**/*' not in au:
-    au.append('node_modules/node/**/*')
-    print('  ✅ asarUnpack 加 node_modules/node/**/*')
+# 宿主跑在「独立 Node」上，而普通 Node 没有 asar 支持：只要代码留在 app.asar 里
+# 就读不到（0.12.1 的 app.asar 有 352MB，全打包）。所以必须把所有 node_modules
+# 解包出来 —— 0.10.0 就是这么做的（它的 app.asar 只有 6.1MB）。
+unpacked_all = False
+if 'node_modules/**/*' not in au:
+    au.append('node_modules/**/*')
+    unpacked_all = True
+if unpacked_all:
+    print('  ✅ asarUnpack 加 node_modules/**/*（独立 Node 无 asar 支持，需全解包）')
 pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 PYEOF
   # 改了 dependencies 就必须同步锁文件，否则 npm ci 会因不同步而失败
