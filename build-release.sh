@@ -243,65 +243,70 @@ fi
 # --- 1.9 恢复随包独立 Node（Linux 上绕开 Electron 的 sharp 段错误）-------------
 # 上游自 v0.11.0 起让宿主跑在 Electron 自身里（ELECTRON_RUN_AS_NODE=1）。Electron 的
 # Linux 二进制会动态链接全局 glib 并把符号泄漏进进程空间，与 sharp 的 libvips 冲突
-# → SIGSEGV（electron#46323，未修）。v0.10.0 用随包独立 Node 时正常，这里把它加回来：
-#   1. dependencies 加回 node（electron-builder 只打包声明过的依赖）
-#   2. bundledNodePath() 指回它 —— index.ts 里 10 处调用都走这个函数
-#   3. asarUnpack 放行，二进制必须解包才能执行
-# ELECTRON_RUN_AS_NODE 不用处理：它只对 Electron 二进制有意义，普通 node 会忽略。
-if [[ -f "$SRC/src/main/index.ts" ]] && grep -q 'return electronNodeExecutable(process.execPath)' "$SRC/src/main/index.ts"; then
+# → SIGSEGV（electron#46323，未修）。v0.10.0 用随包独立 Node 时正常，这里把它加回来。
+#
+# 关键：0.12.1 把整个运行时打进 app.asar（352MB），而
+#   bundledRuntimeRoot() = app.getAppPath()   ← 返回「app.asar 这个文件」
+# 它有 14 处使用（dshEntryPath / bundledNodePath / pnpm / presets / node_modules…），
+# 只修一处不够。所以直接改 bundledRuntimeRoot()：打包时指向 app.asar.unpacked。
+# 同时因为宿主跑在普通 Node 上（无 asar 支持），node_modules 必须全量解包。
+if [[ -f "$SRC/src/main/index.ts" ]] && grep -q '^function bundledRuntimeRoot(): string {' "$SRC/src/main/index.ts"; then
   python3 - "$SRC" <<'PYEOF'
 import json, pathlib, sys
 src = pathlib.Path(sys.argv[1])
 
 idx = src / 'src/main/index.ts'
 s = idx.read_text(encoding='utf-8')
-old = """function bundledNodePath(): string {
+
+old_root = """function bundledRuntimeRoot(): string {
+  return app.getAppPath()
+}"""
+new_root = """function bundledRuntimeRoot(): string {
+  // 0.12.1 把运行时打进了 app.asar，而 app.getAppPath() 返回的是 app.asar 这个
+  // 「文件」，下面所有拼 node_modules 的地方都会失效。宿主跑在随包独立 Node 上
+  //（没有 asar 支持），node_modules 已 asarUnpack 出来，所以打包时指向 unpacked。
+  return app.isPackaged
+    ? join(process.resourcesPath, 'app.asar.unpacked')
+    : app.getAppPath()
+}"""
+if 'app.asar.unpacked' in s.split('function bundledRuntimeRoot')[1][:300]:
+    print('  ⏭ bundledRuntimeRoot 已修')
+elif old_root in s:
+    idx.write_text(s.replace(old_root, new_root, 1), encoding='utf-8')
+    print('  ✅ bundledRuntimeRoot 打包时指向 app.asar.unpacked（一处修好 14 处）')
+else:
+    print('  ⚠ bundledRuntimeRoot 未匹配，可能上游已改')
+    raise SystemExit(0)
+
+s = idx.read_text(encoding='utf-8')
+old_node = """function bundledNodePath(): string {
   return electronNodeExecutable(process.execPath)
 }"""
-new = """function bundledNodePath(): string {
+new_node = """function bundledNodePath(): string {
   // 不用 Electron 跑 Node：其 Linux 二进制会泄漏 glib 符号，与 sharp 的 libvips
   // 冲突导致段错误（electron/electron#46323）。用随包独立 Node。
-  //
-  // 注意不能直接用 bundledRuntimeRoot()：0.12.1 把整个运行时塞进了 app.asar
-  //（0.12.1 的 app.asar 有 369MB），而 app.getAppPath() 返回的是 app.asar
-  //  这个「文件」，拼出 .../app.asar/node_modules/node/bin/node 会 ENOTDIR。
-  //  独立 Node 是 asarUnpack 出来的，必须从 app.asar.unpacked 取。
-  //（0.10.0 没这问题是因为它那时的 bundledRuntimeRoot() 会解析到 unpacked 根。）
-  const root = app.isPackaged
-    ? join(process.resourcesPath, 'app.asar.unpacked')
-    : bundledRuntimeRoot()
   const executable = process.platform === 'win32' ? 'node.exe' : 'node'
-  return join(root, 'node_modules', 'node', 'bin', executable)
+  return join(bundledRuntimeRoot(), 'node_modules', 'node', 'bin', executable)
 }"""
-if old not in s:
-    print('  ⚠ bundledNodePath 未匹配，跳过'); raise SystemExit(0)
-idx.write_text(s.replace(old, new, 1), encoding='utf-8')
-print('  ✅ bundledNodePath 指回随包独立 Node')
+if old_node in s:
+    idx.write_text(s.replace(old_node, new_node, 1), encoding='utf-8')
+    print('  ✅ bundledNodePath 指回随包独立 Node')
 
 pkg_path = src / 'package.json'
 pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
-deps = pkg.setdefault('dependencies', {})
-if 'node' not in deps:
-    deps['node'] = '24.9.0'
-    print('  ✅ dependencies 加 node@24.9.0')
 au = pkg['build'].setdefault('asarUnpack', [])
-# 宿主跑在「独立 Node」上，而普通 Node 没有 asar 支持：只要代码留在 app.asar 里
-# 就读不到（0.12.1 的 app.asar 有 352MB，全打包）。所以必须把所有 node_modules
-# 解包出来 —— 0.10.0 就是这么做的（它的 app.asar 只有 6.1MB）。
-unpacked_all = False
+# 宿主跑在独立 Node 上，普通 Node 没有 asar 支持：代码留在 app.asar 里就读不到。
+# 必须全量解包 node_modules（0.10.0 就是这么做的，它的 app.asar 只有 6.1MB）。
 if 'node_modules/**/*' not in au:
     au.append('node_modules/**/*')
-    unpacked_all = True
-if unpacked_all:
-    print('  ✅ asarUnpack 加 node_modules/**/*（独立 Node 无 asar 支持，需全解包）')
-pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    print('  ✅ asarUnpack 加 node_modules/**/*（全量解包）')
 PYEOF
-  # 改了 dependencies 就必须同步锁文件，否则 npm ci 会因不同步而失败
   ( cd "$SRC" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund >/dev/null 2>&1 \
       || die "同步 package-lock.json 失败" )
-  log "已恢复随包独立 Node，并同步锁文件"
+  log "已恢复随包独立 Node + 修正运行时根，并同步锁文件"
 else
-  log "上游已自带独立 Node 或结构已变，跳过 1.9"
+  log "上游结构已变，跳过 1.9"
 fi
 
 # --- 1.10 修 verify-packaged-harness.cjs 里同样的可执行路径判断 -----------------
